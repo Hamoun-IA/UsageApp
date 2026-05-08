@@ -1,6 +1,7 @@
 const { EventEmitter } = require('events');
 const { parseCodexUsage } = require('./codex-parser');
 const { captureCodexCookie } = require('./codex-connect');
+const { browserHeaders } = require('./_browser-headers');
 
 const id = 'codex';
 const label = 'Codex';
@@ -41,7 +42,7 @@ function buildSnapshot(partial) {
 }
 
 async function fetchAccessToken(cookie) {
-  const r = await fetch(SESSION_URL, { headers: { Cookie: cookie } });
+  const r = await fetch(SESSION_URL, { headers: browserHeaders('https://chatgpt.com/', { Cookie: cookie }) });
   if (r.status === 401 || r.status === 403) {
     return { error: { code: 'AUTH_EXPIRED', message: 'ChatGPT session expired — reconnect Codex', retriable: false } };
   }
@@ -61,7 +62,11 @@ async function refresh() {
   try {
     const tokenResp = await fetchAccessToken(cookie);
     if (tokenResp.error) return buildSnapshot({ error: tokenResp.error });
-    const r = await fetch(USAGE_URL, { headers: { Authorization: `Bearer ${tokenResp.token}` } });
+    const r = await fetch(USAGE_URL, {
+      headers: browserHeaders('https://chatgpt.com/codex/cloud/settings/analytics', {
+        Authorization: `Bearer ${tokenResp.token}`,
+      }),
+    });
     if (r.status === 401 || r.status === 403) {
       return buildSnapshot({ error: { code: 'AUTH_EXPIRED', message: 'Token rejected — reconnect Codex', retriable: false } });
     }

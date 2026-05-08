@@ -23,19 +23,24 @@ async function captureClaudeCookie() {
 
     win.on('closed', () => { if (!resolved) finishErr(new Error('User closed the window')); });
 
+    const PROBE_JS = `(async () => {
+      try {
+        const r = await fetch('/api/organizations', { credentials: 'include' });
+        if (!r.ok) return false;
+        const orgs = await r.json();
+        return Array.isArray(orgs) && orgs.length > 0;
+      } catch { return false; }
+    })()`;
+
     const tryCapture = async () => {
       try {
         const url = win.webContents.getURL();
         if (!SUCCESS_URL_PATTERN.test(url)) return;
+        const probeOk = await win.webContents.executeJavaScript(PROBE_JS);
+        if (!probeOk) return;
         const cookies = await win.webContents.session.cookies.get({ url: 'https://claude.ai' });
         if (!cookies || cookies.length === 0) return;
         const cookieStr = cookies.map((c) => `${c.name}=${c.value}`).join('; ');
-        const orgsR = await fetch('https://claude.ai/api/organizations', {
-          headers: { Cookie: cookieStr },
-        });
-        if (!orgsR.ok) return;
-        const orgs = await orgsR.json();
-        if (!Array.isArray(orgs) || orgs.length === 0) return;
         finishOk(cookieStr);
       } catch (e) { /* retry */ }
     };

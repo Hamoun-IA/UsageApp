@@ -1,6 +1,7 @@
 const { EventEmitter } = require('events');
 const { parseClaudeUsage, parseClaudePlanLevel } = require('./claude-parser');
 const { captureClaudeCookie } = require('./claude-connect');
+const { browserHeaders } = require('./_browser-headers');
 
 const id = 'claude';
 const label = 'Claude';
@@ -39,7 +40,7 @@ function buildSnapshot(partial) {
 }
 
 async function fetchOrgId(cookie) {
-  const r = await fetch(ORGS_URL, { headers: { Cookie: cookie } });
+  const r = await fetch(ORGS_URL, { headers: browserHeaders('https://claude.ai/', { Cookie: cookie }) });
   if (r.status === 401 || r.status === 403) {
     return { error: { code: 'AUTH_EXPIRED', message: 'Claude session expired — reconnect Claude', retriable: false } };
   }
@@ -60,9 +61,10 @@ async function refresh() {
     const orgResp = await fetchOrgId(cookie);
     if (orgResp.error) return buildSnapshot({ error: orgResp.error });
     const orgId = orgResp.orgId;
+    const referer = 'https://claude.ai/settings/usage';
     const [usageR, rlR] = await Promise.all([
-      fetch(usageUrl(orgId), { headers: { Cookie: cookie } }),
-      fetch(rateLimitsUrl(orgId), { headers: { Cookie: cookie } }),
+      fetch(usageUrl(orgId), { headers: browserHeaders(referer, { Cookie: cookie }) }),
+      fetch(rateLimitsUrl(orgId), { headers: browserHeaders(referer, { Cookie: cookie }) }),
     ]);
     if (usageR.status === 401 || usageR.status === 403) {
       return buildSnapshot({ error: { code: 'AUTH_EXPIRED', message: 'Cookie rejected — reconnect Claude', retriable: false } });

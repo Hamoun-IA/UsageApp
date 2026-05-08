@@ -23,18 +23,23 @@ async function captureCodexCookie() {
 
     win.on('closed', () => { if (!resolved) finishErr(new Error('User closed the window')); });
 
+    const PROBE_JS = `(async () => {
+      try {
+        const r = await fetch('/api/auth/session', { credentials: 'include' });
+        if (!r.ok) return false;
+        const j = await r.json();
+        return typeof j?.accessToken === 'string';
+      } catch { return false; }
+    })()`;
+
     const tryCapture = async () => {
       try {
         const url = win.webContents.getURL();
         if (!SUCCESS_URL_PATTERN.test(url)) return;
+        const probeOk = await win.webContents.executeJavaScript(PROBE_JS);
+        if (!probeOk) return;
         const cookies = await win.webContents.session.cookies.get({ url: 'https://chatgpt.com' });
         if (!cookies || cookies.length === 0) return;
-        const sessionR = await fetch('https://chatgpt.com/api/auth/session', {
-          headers: { Cookie: cookies.map((c) => `${c.name}=${c.value}`).join('; ') },
-        });
-        if (!sessionR.ok) return;
-        const j = await sessionR.json();
-        if (typeof j?.accessToken !== 'string') return;
         const cookieStr = cookies.map((c) => `${c.name}=${c.value}`).join('; ');
         finishOk(cookieStr);
       } catch (e) { /* retry */ }
