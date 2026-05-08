@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, afterEach } from 'vitest';
-import { render, container, cleanup } from '@testing-library/react';
+import { render, cleanup } from '@testing-library/react';
 import Sparkline from '../../src/detail/components/Sparkline.jsx';
 
 afterEach(cleanup);
