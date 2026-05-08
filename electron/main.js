@@ -1,5 +1,5 @@
 const path = require('node:path');
-const { app, BrowserWindow, ipcMain, shell, Tray, Menu, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, Tray, Menu, nativeImage, globalShortcut } = require('electron');
 
 const db = require('./db');
 const { registerIpcHandlers } = require('./ipc');
@@ -74,6 +74,11 @@ function createTray() {
   tray.setToolTip('AI Usage Monitor');
   tray.setContextMenu(ctx);
   tray.on('click', () => toggleWidget(tray));
+  tray.on('double-click', () => {
+    if (!mainWindow) return;
+    mainWindow.show();
+    mainWindow.focus();
+  });
 }
 
 // ---- Misc IPC kept from legacy (non-db) ----
@@ -85,6 +90,21 @@ ipcMain.handle('app:open-external', (_e, url) => {
 
 ipcMain.on('widget:setHeight', (_e, height) => {
   if (typeof height === 'number' && Number.isFinite(height)) setWidgetHeight(height);
+});
+
+ipcMain.handle('app:openDetail', () => {
+  if (!mainWindow) return false;
+  mainWindow.show();
+  mainWindow.focus();
+  return true;
+});
+
+ipcMain.handle('app:openSettings', () => {
+  if (!mainWindow) return false;
+  mainWindow.show();
+  mainWindow.focus();
+  mainWindow.webContents.send('app:navigateTo', 'settings');
+  return true;
 });
 
 // ---------------------------- App lifecycle ----------------------------
@@ -101,6 +121,13 @@ app.whenReady().then(() => {
   createWindow();
   createTray();
 
+  const shortcutOk = globalShortcut.register('CommandOrControl+Shift+Alt+U', () => {
+    if (!mainWindow) return;
+    if (mainWindow.isVisible()) mainWindow.hide();
+    else { mainWindow.show(); mainWindow.focus(); }
+  });
+  if (!shortcutOk) console.warn('Failed to register global shortcut Ctrl+Shift+Alt+U — already in use?');
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -108,6 +135,7 @@ app.whenReady().then(() => {
 
 app.on('before-quit', () => {
   app.isQuiting = true;
+  globalShortcut.unregisterAll();
 });
 
 app.on('window-all-closed', () => {

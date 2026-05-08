@@ -3,7 +3,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import App from '../../src/detail/App.jsx';
 
+let navigateToCallback = null;
+
 beforeEach(() => {
+  navigateToCallback = null;
   // Provide a minimal window.api so Dashboard/Settings do not crash in routing tests
   window.api = {
     providers: {
@@ -19,6 +22,10 @@ beforeEach(() => {
     app: {
       setAutostart: vi.fn().mockResolvedValue(true),
       getAutostart: vi.fn().mockResolvedValue(false),
+      onNavigateTo: vi.fn().mockImplementation((cb) => {
+        navigateToCallback = cb;
+        return vi.fn(); // unsubscribe
+      }),
     },
   };
 });
@@ -79,5 +86,43 @@ describe('App routing', () => {
     await waitFor(() => {
       expect(screen.getByText('Session 5h')).toBeTruthy();
     });
+  });
+});
+
+describe('App onNavigateTo IPC integration', () => {
+  it('switches to Settings page when onNavigateTo callback fires with "settings"', async () => {
+    setLocationSearch('');
+    render(<App />);
+    // onNavigateTo should have been registered
+    expect(window.api.app.onNavigateTo).toHaveBeenCalledTimes(1);
+    // Trigger the callback
+    await waitFor(() => expect(navigateToCallback).toBeTruthy());
+    navigateToCallback('settings');
+    await waitFor(() => {
+      expect(screen.getByText('Connexions')).toBeTruthy();
+    });
+  });
+
+  it('ignores unknown page values from onNavigateTo callback', async () => {
+    setLocationSearch('');
+    render(<App />);
+    await waitFor(() => expect(navigateToCallback).toBeTruthy());
+    navigateToCallback('bogus');
+    // Should still show Dashboard (default)
+    await waitFor(() => {
+      expect(screen.getAllByText('Dashboard').length).toBeGreaterThan(0);
+    });
+  });
+
+  it('calls the unsubscribe function returned by onNavigateTo on unmount', () => {
+    setLocationSearch('');
+    const unsubscribe = vi.fn();
+    window.api.app.onNavigateTo.mockImplementationOnce((cb) => {
+      navigateToCallback = cb;
+      return unsubscribe;
+    });
+    const { unmount } = render(<App />);
+    unmount();
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
   });
 });

@@ -17,7 +17,14 @@ contextBridge.exposeInMainWorld('api', {
     setHeight:   (h) => ipcRenderer.send('widget:setHeight', h),
   },
   app: {
-    setAutostart: (enabled) => ipcRenderer.invoke('app:setAutostart', enabled),
-    getAutostart: ()        => ipcRenderer.invoke('app:getAutostart'),
+    setAutostart:  (enabled) => ipcRenderer.invoke('app:setAutostart', enabled),
+    getAutostart:  ()        => ipcRenderer.invoke('app:getAutostart'),
+    openDetail:    ()        => ipcRenderer.invoke('app:openDetail'),
+    openSettings:  ()        => ipcRenderer.invoke('app:openSettings'),
+    onNavigateTo:  (cb) => {
+      const handler = (_e, page) => cb(page);
+      ipcRenderer.on('app:navigateTo', handler);
+      return () => ipcRenderer.removeListener('app:navigateTo', handler);
+    },
   },
 });

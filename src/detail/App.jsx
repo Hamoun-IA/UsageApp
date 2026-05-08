@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Sidebar from './components/Sidebar.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import History from './pages/History.jsx';
@@ -22,6 +22,14 @@ const PAGE_COMPONENTS = {
 
 export default function App() {
   const [activePage, setActivePage] = useState(getInitialPage);
+
+  useEffect(() => {
+    if (!window.api?.app?.onNavigateTo) return;
+    const unsubscribe = window.api.app.onNavigateTo((page) => {
+      if (VALID_PAGES.includes(page)) setActivePage(page);
+    });
+    return () => { if (typeof unsubscribe === 'function') unsubscribe(); };
+  }, []);
 
   const PageComponent = PAGE_COMPONENTS[activePage] || Dashboard;
 
