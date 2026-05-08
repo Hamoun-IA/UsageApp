@@ -34,6 +34,12 @@ function isValidSnapshot(s) {
   if (typeof s.provider !== 'string') return false;
   if (typeof s.fetchedAt !== 'number') return false;
   if (typeof s.approximated !== 'boolean') return false;
+  if (s.error !== null) {
+    if (typeof s.error !== 'object') return false;
+    if (typeof s.error.code !== 'string') return false;
+    if (typeof s.error.message !== 'string') return false;
+    if (typeof s.error.retriable !== 'boolean') return false;
+  }
   return true;
 }
 

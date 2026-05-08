@@ -38,4 +38,22 @@ describe('Snapshot validation', () => {
     };
     expect(isValidSnapshot(s)).toBe(true);
   });
+
+  it('rejects snapshot with malformed error object', () => {
+    const base = {
+      provider: 'zai',
+      fetchedAt: Date.now(),
+      sessionPct: null,
+      weeklyPct: null,
+      sessionResetAt: null,
+      weeklyResetAt: null,
+      planLevel: null,
+      approximated: false,
+      raw: null,
+    };
+    expect(isValidSnapshot({ ...base, error: 'a string' })).toBe(false);
+    expect(isValidSnapshot({ ...base, error: { code: 123, message: 'x', retriable: false } })).toBe(false);
+    expect(isValidSnapshot({ ...base, error: { code: 'NETWORK', message: 'x' } })).toBe(false);
+    expect(isValidSnapshot({ ...base, error: { code: 'NETWORK', message: 'x', retriable: 'yes' } })).toBe(false);
+  });
 });
