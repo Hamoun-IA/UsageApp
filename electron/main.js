@@ -3,6 +3,7 @@ const { app, BrowserWindow, ipcMain, shell, Tray, Menu, nativeImage } = require(
 
 const db = require('./db');
 const { registerIpcHandlers } = require('./ipc');
+const { toggleWidget } = require('./widget-window');
 
 // Scheduler and notifier disabled during transition (M1.8) — will be refactored in M5.
 // const Scheduler = require('./scheduler');
@@ -47,20 +48,23 @@ function createWindow() {
 }
 
 function createTray() {
+  const fs = require('fs');
+  const pngPath = path.join(__dirname, '..', 'build', 'icon.png');
+  const icoPath = path.join(__dirname, '..', 'build', 'icon.ico');
+
   try {
-    const icon = nativeImage.createFromPath(
-      path.join(__dirname, '..', 'build', 'icon.ico'),
-    );
+    const iconPath = fs.existsSync(pngPath) ? pngPath : icoPath;
+    const icon = nativeImage.createFromPath(iconPath);
     tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
   } catch {
     tray = new Tray(nativeImage.createEmpty());
   }
 
   const ctx = Menu.buildFromTemplate([
-    { label: 'Ouvrir', click: () => mainWindow?.show() },
+    { label: 'Open Widget', click: () => toggleWidget(tray) },
     { type: 'separator' },
     {
-      label: 'Quitter',
+      label: 'Quit',
       click: () => {
         app.isQuiting = true;
         app.quit();
@@ -69,7 +73,7 @@ function createTray() {
   ]);
   tray.setToolTip('AI Usage Monitor');
   tray.setContextMenu(ctx);
-  tray.on('click', () => (mainWindow?.isVisible() ? mainWindow.hide() : mainWindow?.show()));
+  tray.on('click', () => toggleWidget(tray));
 }
 
 // ---- Misc IPC kept from legacy (non-db) ----
