@@ -1,5 +1,6 @@
 const { EventEmitter } = require('events');
 const { parseOllamaSettings } = require('./ollama-parser');
+const { captureOllamaCookie } = require('./ollama-connect');
 
 const id = 'ollama';
 const label = 'Ollama';
@@ -10,11 +11,12 @@ const emitter = new EventEmitter();
 
 const deps = {
   secrets: require('../secrets'),
+  captureOllamaCookie,
 };
 
 async function connect() {
-  // Webview flow lands in Task 3.3.
-  throw new Error('ollama.connect: webview flow not yet implemented (Task 3.3)');
+  const cookie = await deps.captureOllamaCookie();
+  deps.secrets.setProviderSecret(id, cookie);
 }
 
 async function disconnect() {

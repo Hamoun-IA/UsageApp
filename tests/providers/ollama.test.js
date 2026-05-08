@@ -106,3 +106,36 @@ describe('ollama.refresh()', () => {
     expect(snap.error.retriable).toBe(true);
   });
 });
+
+describe('ollama.connect()', () => {
+  let ollama;
+  let fakeSecrets;
+  let fakeCapture;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    vi.resetModules();
+    ollama = await import('../../electron/providers/ollama.js');
+    fakeSecrets = {
+      getProviderSecret: vi.fn(),
+      setProviderSecret: vi.fn(),
+      clearProviderSecret: vi.fn(),
+    };
+    fakeCapture = vi.fn();
+    ollama.deps.secrets = fakeSecrets;
+    ollama.deps.captureOllamaCookie = fakeCapture;
+  });
+
+  it('captures cookie via webview and stores it via secrets', async () => {
+    fakeCapture.mockResolvedValue('session=ABC123; foo=bar');
+    await ollama.connect();
+    expect(fakeCapture).toHaveBeenCalledOnce();
+    expect(fakeSecrets.setProviderSecret).toHaveBeenCalledWith('ollama', 'session=ABC123; foo=bar');
+  });
+
+  it('propagates capture errors without storing anything', async () => {
+    fakeCapture.mockRejectedValue(new Error('User closed the window'));
+    await expect(ollama.connect()).rejects.toThrow('User closed the window');
+    expect(fakeSecrets.setProviderSecret).not.toHaveBeenCalled();
+  });
+});
