@@ -19,11 +19,11 @@ const THIRTY_DAYS_MS = 30 * 24 * 3600_000;
 /**
  * Convert DESC rows from a single provider into a chronological series.
  * @param {Array} rows  - snake_case DB rows (DESC by fetched_at)
- * @param {'session'|'weekly'} window - which metric to read
+ * @param {'session'|'weekly'} windowMode - which metric to read
  * @returns {Array<{time: number, value: number|null}>}
  */
-export function prepSingleSeries(rows, window) {
-  const field = window === 'weekly' ? 'weekly_pct' : 'session_pct';
+export function prepSingleSeries(rows, windowMode) {
+  const field = windowMode === 'weekly' ? 'weekly_pct' : 'session_pct';
   return rows
     .slice()
     .reverse()
@@ -34,11 +34,11 @@ export function prepSingleSeries(rows, window) {
  * Merge rows from all 4 providers into a wide-format chronological series.
  * Rows with the same fetched_at are merged into a single object.
  * @param {Object} rowsByProvider - { claude: [...], codex: [...], ... }
- * @param {'session'|'weekly'} window
+ * @param {'session'|'weekly'} windowMode
  * @returns {Array<{time: number, claude?, codex?, ollama?, zai?}>}
  */
-export function prepAllSeries(rowsByProvider, window) {
-  const field = window === 'weekly' ? 'weekly_pct' : 'session_pct';
+export function prepAllSeries(rowsByProvider, windowMode) {
+  const field = windowMode === 'weekly' ? 'weekly_pct' : 'session_pct';
 
   // Collect all points keyed by timestamp
   const byTime = {};
@@ -137,7 +137,7 @@ const styles = {
 // Custom tooltip
 // ---------------------------------------------------------------------------
 
-function CustomTooltip({ active, payload, label }) {
+function CustomTooltip({ active, payload, label, singleProviderLabel }) {
   if (!active || !payload || payload.length === 0) return null;
   return (
     <div
@@ -151,11 +151,16 @@ function CustomTooltip({ active, payload, label }) {
       }}
     >
       <div style={{ marginBottom: 4, color: '#9ca3af' }}>{formatTooltipDate(label)}</div>
-      {payload.map(entry => (
-        <div key={entry.dataKey} style={{ color: entry.color }}>
-          {PROVIDER_LABELS[entry.dataKey] || entry.dataKey}: {entry.value != null ? `${entry.value}%` : '—'}
-        </div>
-      ))}
+      {payload.map(entry => {
+        const name = entry.dataKey === 'value'
+          ? singleProviderLabel
+          : (PROVIDER_LABELS[entry.dataKey] || entry.dataKey);
+        return (
+          <div key={entry.dataKey} style={{ color: entry.color }}>
+            {name}: {entry.value != null ? `${entry.value}%` : '—'}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -281,7 +286,7 @@ export default function History() {
                 axisLine={false}
                 tickFormatter={v => `${v}%`}
               />
-              <Tooltip content={<CustomTooltip />} />
+              <Tooltip content={<CustomTooltip singleProviderLabel={isSingle ? PROVIDER_LABELS[selectedProvider] : undefined} />} />
               {isSingle ? (
                 <Area
                   type="monotone"
