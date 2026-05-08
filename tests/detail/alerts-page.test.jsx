@@ -2,7 +2,7 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent, cleanup, act } from '@testing-library/react';
 import Alerts from '../../src/detail/pages/Alerts.jsx';
-import { DEFAULT_THRESHOLDS } from '../../src/shared/alert-defaults.js';
+import DEFAULT_THRESHOLDS from '../../src/shared/alert-defaults.json';
 
 // ---------------------------------------------------------------------------
 // Setup / teardown

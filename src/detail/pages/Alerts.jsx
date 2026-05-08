@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { PROVIDER_COLORS, PROVIDER_LABELS, formatRelativeTime } from '../../shared/snapshot-utils.js';
-import { DEFAULT_THRESHOLDS } from '../../shared/alert-defaults.js';
+import DEFAULT_THRESHOLDS from '../../shared/alert-defaults.json';
 
 // ---------------------------------------------------------------------------
 // Constants

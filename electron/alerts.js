@@ -1,6 +1,6 @@
 'use strict';
 
-const { DEFAULT_THRESHOLDS } = require('../src/shared/alert-defaults.js');
+const DEFAULT_THRESHOLDS = require('../src/shared/alert-defaults.json');
 
 const COOLDOWN_MS = 6 * 3_600_000; // 6 hours
 

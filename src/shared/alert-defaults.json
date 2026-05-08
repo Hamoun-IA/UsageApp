@@ -1,0 +1,6 @@
+{
+  "claude": { "session": 90, "weekly": 95, "errorHours": 2 },
+  "codex":  { "session": 90, "weekly": 95, "errorHours": 2 },
+  "ollama": { "session": 90, "weekly": 95, "errorHours": 2 },
+  "zai":    { "session": 90, "weekly": 95, "errorHours": 2 }
+}
