@@ -1,124 +1,92 @@
 const { EventEmitter } = require('events');
-const fs = require('fs');
-const {
-  patchClaudeSettings,
-  unpatchClaudeSettings,
-  readClaudeSettings,
-  defaultClaudeSettingsPath,
-  defaultUsageFilePath,
-} = require('./claude-statusline');
+const { parseClaudeUsage, parseClaudePlanLevel } = require('./claude-parser');
+const { captureClaudeCookie } = require('./claude-connect');
 
 const id = 'claude';
 const label = 'Claude';
-const authMode = 'cli-file';
-const STALE_MS = 30 * 60 * 1000;
+const authMode = 'webview';
+const ORGS_URL = 'https://claude.ai/api/organizations';
+const usageUrl = (orgId) => `https://claude.ai/api/organizations/${orgId}/usage`;
+const rateLimitsUrl = (orgId) => `https://claude.ai/api/organizations/${orgId}/rate_limits`;
 
 const emitter = new EventEmitter();
 
 const deps = {
-  patchClaudeSettings,
-  unpatchClaudeSettings,
-  readClaudeSettings,
-  settingsPath: defaultClaudeSettingsPath(),
-  usageFilePath: defaultUsageFilePath(),
+  secrets: require('../secrets'),
+  captureClaudeCookie,
 };
 
-function isStatusLinePatched() {
-  const settings = deps.readClaudeSettings(deps.settingsPath);
-  const cmd = settings.statusLine && settings.statusLine.command;
-  return typeof cmd === 'string' && cmd.includes('ai-usage-monitor');
-}
-
 async function connect() {
-  deps.patchClaudeSettings();
+  const cookie = await deps.captureClaudeCookie();
+  deps.secrets.setProviderSecret(id, cookie);
 }
 
 async function disconnect() {
-  deps.unpatchClaudeSettings();
+  deps.secrets.clearProviderSecret(id);
 }
 
 function buildSnapshot(partial) {
   return {
     provider: id,
     fetchedAt: Date.now(),
-    sessionPct: null,
-    weeklyPct: null,
-    sessionResetAt: null,
-    weeklyResetAt: null,
+    sessionPct: null, weeklyPct: null,
+    sessionResetAt: null, weeklyResetAt: null,
     planLevel: null,
     approximated: false,
-    raw: null,
-    error: null,
+    raw: null, error: null,
     ...partial,
   };
 }
 
-function parseClaudeUsage(raw) {
-  const fiveH = raw && raw.rate_limits && raw.rate_limits.five_hour;
-  const sevenD = raw && raw.rate_limits && raw.rate_limits.seven_day;
-  return {
-    sessionPct: fiveH && typeof fiveH.used_percentage === 'number' ? fiveH.used_percentage : null,
-    weeklyPct: sevenD && typeof sevenD.used_percentage === 'number' ? sevenD.used_percentage : null,
-    sessionResetAt: fiveH && typeof fiveH.resets_at === 'number' ? fiveH.resets_at * 1000 : null,
-    weeklyResetAt: sevenD && typeof sevenD.resets_at === 'number' ? sevenD.resets_at * 1000 : null,
-    planLevel: raw && raw.rate_limits ? 'Subscriber' : null,
-  };
+async function fetchOrgId(cookie) {
+  const r = await fetch(ORGS_URL, { headers: { Cookie: cookie } });
+  if (r.status === 401 || r.status === 403) {
+    return { error: { code: 'AUTH_EXPIRED', message: 'Claude session expired — reconnect Claude', retriable: false } };
+  }
+  if (!r.ok) return { error: { code: 'NETWORK', message: `HTTP ${r.status} on /api/organizations`, retriable: true } };
+  const orgs = await r.json();
+  if (!Array.isArray(orgs) || orgs.length === 0 || typeof orgs[0].uuid !== 'string') {
+    return { error: { code: 'AUTH_EXPIRED', message: 'No org returned from /api/organizations', retriable: false } };
+  }
+  return { orgId: orgs[0].uuid };
 }
 
 async function refresh() {
-  if (!isStatusLinePatched()) {
-    return buildSnapshot({
-      error: { code: 'NOT_CONFIGURED', message: 'Connect Claude first', retriable: false },
-    });
+  const cookie = deps.secrets.getProviderSecret(id);
+  if (!cookie) {
+    return buildSnapshot({ error: { code: 'NOT_CONFIGURED', message: 'Connect Claude first', retriable: false } });
   }
-
-  let stat;
   try {
-    stat = fs.statSync(deps.usageFilePath);
-  } catch {
-    return buildSnapshot({
-      error: { code: 'CLI_INACTIVE', message: 'Lance `claude` au moins une fois après avoir connecté', retriable: true },
-    });
-  }
-
-  let raw;
-  try {
-    raw = JSON.parse(fs.readFileSync(deps.usageFilePath, 'utf-8'));
+    const orgResp = await fetchOrgId(cookie);
+    if (orgResp.error) return buildSnapshot({ error: orgResp.error });
+    const orgId = orgResp.orgId;
+    const [usageR, rlR] = await Promise.all([
+      fetch(usageUrl(orgId), { headers: { Cookie: cookie } }),
+      fetch(rateLimitsUrl(orgId), { headers: { Cookie: cookie } }),
+    ]);
+    if (usageR.status === 401 || usageR.status === 403) {
+      return buildSnapshot({ error: { code: 'AUTH_EXPIRED', message: 'Cookie rejected — reconnect Claude', retriable: false } });
+    }
+    if (!usageR.ok) {
+      return buildSnapshot({ error: { code: 'NETWORK', message: `HTTP ${usageR.status} on /usage`, retriable: true } });
+    }
+    const usageJson = await usageR.json();
+    const parsed = parseClaudeUsage(usageJson);
+    let planLevel = null;
+    if (rlR.ok) {
+      try { planLevel = parseClaudePlanLevel(await rlR.json()); } catch { /* tolerate rate_limits failure — usage is the primary signal */ }
+    }
+    const { sevenDaySonnetPct, sevenDayOpusPct, ...fields } = parsed;
+    return buildSnapshot({ ...fields, planLevel, raw: { usage: usageJson, sevenDaySonnetPct, sevenDayOpusPct } });
   } catch (e) {
-    return buildSnapshot({
-      error: { code: 'PARSE', message: `Failed to parse usage file: ${e.message}`, retriable: false },
-    });
+    if (e.message && e.message.includes('Unexpected Claude usage response')) {
+      return buildSnapshot({ error: { code: 'PARSE', message: e.message, retriable: false } });
+    }
+    return buildSnapshot({ error: { code: 'NETWORK', message: e.message || String(e), retriable: true } });
   }
-
-  const parsed = parseClaudeUsage(raw);
-  const ageMs = Date.now() - stat.mtimeMs;
-
-  if (ageMs > STALE_MS) {
-    return buildSnapshot({
-      ...parsed,
-      raw,
-      error: {
-        code: 'CLI_INACTIVE',
-        message: `claude inactif depuis ${Math.round(ageMs / 60000)} min`,
-        retriable: true,
-      },
-    });
-  }
-
-  return buildSnapshot({ ...parsed, raw });
 }
 
-let watcher = null;
-
 function subscribe(cb) {
-  if (!watcher) {
-    const chokidar = require('chokidar');
-    watcher = chokidar.watch(deps.usageFilePath, { ignoreInitial: true });
-    watcher.on('change', async () => {
-      const snap = await refresh();
-      emitter.emit('snapshot', snap);
-    });
-  }
   emitter.on('snapshot', cb);
   return () => emitter.off('snapshot', cb);
 }

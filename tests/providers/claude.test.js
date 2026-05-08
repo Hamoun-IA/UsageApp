@@ -1,174 +1,181 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync, utimesSync } from 'fs';
-import { resolve } from 'path';
-import { tmpdir } from 'os';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('electron', () => ({
   app: { getPath: () => '/tmp' },
-  safeStorage: { isEncryptionAvailable: () => true, encryptString: (s) => Buffer.from(s), decryptString: (b) => b.toString() },
+  safeStorage: {
+    isEncryptionAvailable: () => true,
+    encryptString: (s) => Buffer.from(s),
+    decryptString: (b) => b.toString(),
+  },
 }));
 
-let tempDir;
-beforeEach(() => {
-  tempDir = mkdtempSync(resolve(tmpdir(), 'claude-test-'));
-});
-afterEach(() => {
-  rmSync(tempDir, { recursive: true, force: true });
-});
+const FULL_USAGE = {
+  five_hour:        { utilization: 4,  resets_at: '2026-05-09T00:10:01.170686+00:00' },
+  seven_day:        { utilization: 37, resets_at: '2026-05-09T21:00:00.170712+00:00' },
+  seven_day_sonnet: { utilization: 4,  resets_at: '2026-05-09T21:00:00.170718+00:00' },
+  seven_day_opus:   null,
+};
+
+function makeFetch({ orgsStatus = 200, orgsBody = [{ uuid: 'org-1' }], usageStatus = 200, usageBody = FULL_USAGE, rlStatus = 200, rlBody = { rate_limit_tier: 'default_claude_max_5x' } } = {}) {
+  return vi.fn((url) => {
+    if (url.includes('/api/organizations') && !url.includes('/usage') && !url.includes('/rate_limits')) {
+      return Promise.resolve({
+        ok: orgsStatus >= 200 && orgsStatus < 300,
+        status: orgsStatus,
+        json: async () => orgsBody,
+      });
+    }
+    if (url.includes('/usage')) {
+      return Promise.resolve({
+        ok: usageStatus >= 200 && usageStatus < 300,
+        status: usageStatus,
+        json: async () => usageBody,
+      });
+    }
+    if (url.includes('/rate_limits')) {
+      return Promise.resolve({
+        ok: rlStatus >= 200 && rlStatus < 300,
+        status: rlStatus,
+        json: async () => rlBody,
+      });
+    }
+    return Promise.reject(new Error(`Unexpected URL: ${url}`));
+  });
+}
 
 describe('claude.refresh()', () => {
-  it('returns NOT_CONFIGURED when settings.json has no matching statusLine', async () => {
+  let claude;
+  let mockSecrets;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
     vi.resetModules();
-    const claude = await import('../../electron/providers/claude.js');
-    claude.deps.readClaudeSettings = vi.fn().mockReturnValue({
-      enabledPlugins: { foo: true },
-    });
+    claude = await import('../../electron/providers/claude.js');
+    mockSecrets = {
+      getProviderSecret: vi.fn(),
+      setProviderSecret: vi.fn(),
+      clearProviderSecret: vi.fn(),
+    };
+    claude.deps.secrets = mockSecrets;
+  });
+
+  it('returns NOT_CONFIGURED when no cookie stored', async () => {
+    mockSecrets.getProviderSecret.mockReturnValue(null);
     const snap = await claude.refresh();
     expect(snap.error.code).toBe('NOT_CONFIGURED');
     expect(snap.error.retriable).toBe(false);
-  });
-
-  it('returns NOT_CONFIGURED when statusLine exists but is foreign (no ai-usage-monitor)', async () => {
-    vi.resetModules();
-    const claude = await import('../../electron/providers/claude.js');
-    claude.deps.readClaudeSettings = vi.fn().mockReturnValue({
-      statusLine: { type: 'command', command: 'echo "user custom"' },
-    });
-    const snap = await claude.refresh();
-    expect(snap.error.code).toBe('NOT_CONFIGURED');
-  });
-
-  it('returns CLI_INACTIVE when usage file absent', async () => {
-    vi.resetModules();
-    const claude = await import('../../electron/providers/claude.js');
-    claude.deps.readClaudeSettings = vi.fn().mockReturnValue({
-      statusLine: { type: 'command', command: 'node -e "ai-usage-monitor write"' },
-    });
-    claude.deps.usageFilePath = resolve(tempDir, 'never-exists.json');
-    const snap = await claude.refresh();
-    expect(snap.error.code).toBe('CLI_INACTIVE');
-    expect(snap.error.retriable).toBe(true);
     expect(snap.sessionPct).toBeNull();
   });
 
-  it('returns parsed snapshot from real Claude statusLine JSON shape', async () => {
-    const usagePath = resolve(tempDir, 'usage.json');
-    writeFileSync(usagePath, JSON.stringify({
-      rate_limits: {
-        five_hour: { used_percentage: 23.5, resets_at: 1762588800 },
-        seven_day: { used_percentage: 41.2, resets_at: 1763020800 },
-      },
-      model: { id: 'claude-opus-4-7', display_name: 'Opus' },
-    }));
-    vi.resetModules();
-    const claude = await import('../../electron/providers/claude.js');
-    claude.deps.readClaudeSettings = vi.fn().mockReturnValue({
-      statusLine: { type: 'command', command: 'node -e "ai-usage-monitor write"' },
-    });
-    claude.deps.usageFilePath = usagePath;
+  it('returns full snapshot on success with planLevel Max (5x)', async () => {
+    mockSecrets.getProviderSecret.mockReturnValue('sessionKey=abc123');
+    global.fetch = makeFetch();
     const snap = await claude.refresh();
     expect(snap.error).toBeNull();
-    expect(snap.sessionPct).toBe(23.5);
-    expect(snap.weeklyPct).toBe(41.2);
-    expect(snap.sessionResetAt).toBe(1762588800 * 1000);
-    expect(snap.weeklyResetAt).toBe(1763020800 * 1000);
-    expect(snap.planLevel).toBe('Subscriber');
+    expect(snap.sessionPct).toBe(4);
+    expect(snap.weeklyPct).toBe(37);
+    expect(snap.sessionResetAt).toBe(new Date('2026-05-09T00:10:01.170686+00:00').getTime());
+    expect(snap.weeklyResetAt).toBe(new Date('2026-05-09T21:00:00.170712+00:00').getTime());
+    expect(snap.planLevel).toBe('Max (5x)');
+    expect(snap.raw.sevenDaySonnetPct).toBe(4);
+    expect(snap.raw.sevenDayOpusPct).toBeNull();
+    expect(snap.provider).toBe('claude');
+    expect(snap.approximated).toBe(false);
   });
 
-  it('returns snapshot with null pcts but no error when rate_limits absent', async () => {
-    // Non-subscriber or pre-first-API-response: file exists but no rate_limits key
-    const usagePath = resolve(tempDir, 'usage.json');
-    writeFileSync(usagePath, JSON.stringify({
-      model: { id: 'claude-opus-4-7', display_name: 'Opus' },
-    }));
-    vi.resetModules();
-    const claude = await import('../../electron/providers/claude.js');
-    claude.deps.readClaudeSettings = vi.fn().mockReturnValue({
-      statusLine: { type: 'command', command: 'node -e "ai-usage-monitor write"' },
-    });
-    claude.deps.usageFilePath = usagePath;
+  it('returns AUTH_EXPIRED on 401 from /api/organizations', async () => {
+    mockSecrets.getProviderSecret.mockReturnValue('sessionKey=abc123');
+    global.fetch = makeFetch({ orgsStatus: 401 });
     const snap = await claude.refresh();
-    expect(snap.error).toBeNull();
-    expect(snap.sessionPct).toBeNull();
-    expect(snap.weeklyPct).toBeNull();
-    expect(snap.planLevel).toBeNull();
+    expect(snap.error.code).toBe('AUTH_EXPIRED');
+    expect(snap.error.retriable).toBe(false);
   });
 
-  it('handles individually-absent windows (only five_hour present)', async () => {
-    const usagePath = resolve(tempDir, 'usage.json');
-    writeFileSync(usagePath, JSON.stringify({
-      rate_limits: {
-        five_hour: { used_percentage: 10, resets_at: 1762588800 },
-      },
-    }));
-    vi.resetModules();
-    const claude = await import('../../electron/providers/claude.js');
-    claude.deps.readClaudeSettings = vi.fn().mockReturnValue({
-      statusLine: { type: 'command', command: 'node -e "ai-usage-monitor write"' },
-    });
-    claude.deps.usageFilePath = usagePath;
+  it('returns AUTH_EXPIRED on 401 from /usage', async () => {
+    mockSecrets.getProviderSecret.mockReturnValue('sessionKey=abc123');
+    global.fetch = makeFetch({ usageStatus: 401 });
     const snap = await claude.refresh();
-    expect(snap.sessionPct).toBe(10);
-    expect(snap.weeklyPct).toBeNull();
-    expect(snap.sessionResetAt).toBe(1762588800 * 1000);
-    expect(snap.weeklyResetAt).toBeNull();
-    expect(snap.planLevel).toBe('Subscriber');
+    expect(snap.error.code).toBe('AUTH_EXPIRED');
+    expect(snap.error.retriable).toBe(false);
   });
 
-  it('returns CLI_INACTIVE if usage file is stale (> 30 min) but exposes last known values', async () => {
-    const usagePath = resolve(tempDir, 'usage.json');
-    writeFileSync(usagePath, JSON.stringify({
-      rate_limits: {
-        five_hour: { used_percentage: 50, resets_at: 1762588800 },
-        seven_day: { used_percentage: 60, resets_at: 1763020800 },
-      },
-    }));
-    const oldTime = (Date.now() - 3600_000) / 1000;
-    utimesSync(usagePath, oldTime, oldTime);
-    vi.resetModules();
-    const claude = await import('../../electron/providers/claude.js');
-    claude.deps.readClaudeSettings = vi.fn().mockReturnValue({
-      statusLine: { type: 'command', command: 'node -e "ai-usage-monitor write"' },
-    });
-    claude.deps.usageFilePath = usagePath;
+  it('returns AUTH_EXPIRED when /api/organizations returns 200 but empty array', async () => {
+    mockSecrets.getProviderSecret.mockReturnValue('sessionKey=abc123');
+    global.fetch = makeFetch({ orgsBody: [] });
     const snap = await claude.refresh();
-    expect(snap.error.code).toBe('CLI_INACTIVE');
+    expect(snap.error.code).toBe('AUTH_EXPIRED');
+    expect(snap.error.retriable).toBe(false);
+  });
+
+  it('returns NETWORK on 503 from /api/organizations', async () => {
+    mockSecrets.getProviderSecret.mockReturnValue('sessionKey=abc123');
+    global.fetch = makeFetch({ orgsStatus: 503 });
+    const snap = await claude.refresh();
+    expect(snap.error.code).toBe('NETWORK');
     expect(snap.error.retriable).toBe(true);
-    expect(snap.sessionPct).toBe(50);  // Last known value still exposed (per project's "no silent stale" rule, we expose values BUT also the error)
-    expect(snap.weeklyPct).toBe(60);
   });
 
-  it('returns PARSE error when JSON is malformed', async () => {
-    const usagePath = resolve(tempDir, 'usage.json');
-    writeFileSync(usagePath, '{ not valid json');
-    vi.resetModules();
-    const claude = await import('../../electron/providers/claude.js');
-    claude.deps.readClaudeSettings = vi.fn().mockReturnValue({
-      statusLine: { type: 'command', command: 'node -e "ai-usage-monitor write"' },
-    });
-    claude.deps.usageFilePath = usagePath;
+  it('returns NETWORK on fetch throw', async () => {
+    mockSecrets.getProviderSecret.mockReturnValue('sessionKey=abc123');
+    global.fetch = vi.fn().mockRejectedValue(new Error('ECONNRESET'));
+    const snap = await claude.refresh();
+    expect(snap.error.code).toBe('NETWORK');
+    expect(snap.error.retriable).toBe(true);
+  });
+
+  it('returns PARSE when /usage returns malformed JSON (no five_hour, no seven_day)', async () => {
+    mockSecrets.getProviderSecret.mockReturnValue('sessionKey=abc123');
+    global.fetch = makeFetch({ usageBody: { extra_usage: { is_enabled: true } } });
     const snap = await claude.refresh();
     expect(snap.error.code).toBe('PARSE');
     expect(snap.error.retriable).toBe(false);
   });
+
+  it('tolerates /rate_limits failure — snapshot has percentages, planLevel = null, no error', async () => {
+    mockSecrets.getProviderSecret.mockReturnValue('sessionKey=abc123');
+    global.fetch = makeFetch({ rlStatus: 500 });
+    const snap = await claude.refresh();
+    expect(snap.error).toBeNull();
+    expect(snap.sessionPct).toBe(4);
+    expect(snap.weeklyPct).toBe(37);
+    expect(snap.planLevel).toBeNull();
+  });
 });
 
-describe('claude.connect() / disconnect()', () => {
-  it('connect() calls patchClaudeSettings via deps', async () => {
+describe('claude.connect()', () => {
+  let claude;
+  let mockSecrets;
+  let fakeCapture;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
     vi.resetModules();
-    const claude = await import('../../electron/providers/claude.js');
-    const fakePatch = vi.fn();
-    claude.deps.patchClaudeSettings = fakePatch;
-    await claude.connect();
-    expect(fakePatch).toHaveBeenCalledOnce();
+    claude = await import('../../electron/providers/claude.js');
+    mockSecrets = {
+      getProviderSecret: vi.fn(),
+      setProviderSecret: vi.fn(),
+      clearProviderSecret: vi.fn(),
+    };
+    fakeCapture = vi.fn();
+    claude.deps.secrets = mockSecrets;
+    claude.deps.captureClaudeCookie = fakeCapture;
   });
 
-  it('disconnect() calls unpatchClaudeSettings via deps', async () => {
-    vi.resetModules();
-    const claude = await import('../../electron/providers/claude.js');
-    const fakeUnpatch = vi.fn();
-    claude.deps.unpatchClaudeSettings = fakeUnpatch;
+  it('captures cookie via webview and stores it via secrets', async () => {
+    fakeCapture.mockResolvedValue('sessionKey=abc123; foo=bar');
+    await claude.connect();
+    expect(fakeCapture).toHaveBeenCalledOnce();
+    expect(mockSecrets.setProviderSecret).toHaveBeenCalledWith('claude', 'sessionKey=abc123; foo=bar');
+  });
+
+  it('propagates capture errors without storing anything', async () => {
+    fakeCapture.mockRejectedValue(new Error('User closed the window'));
+    await expect(claude.connect()).rejects.toThrow('User closed the window');
+    expect(mockSecrets.setProviderSecret).not.toHaveBeenCalled();
+  });
+
+  it('disconnect() calls clearProviderSecret', async () => {
     await claude.disconnect();
-    expect(fakeUnpatch).toHaveBeenCalledOnce();
+    expect(mockSecrets.clearProviderSecret).toHaveBeenCalledWith('claude');
   });
 });
