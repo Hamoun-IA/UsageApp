@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { PROVIDER_COLORS, PROVIDER_LABELS } from '../../shared/snapshot-utils.js';
 
 const PROVIDERS = ['claude', 'codex', 'ollama', 'zai'];
@@ -117,6 +117,7 @@ export default function Settings() {
   const [autostart, setAutostart] = useState(false);
   const [retentionDays, setRetentionDays] = useState(90);
   const [loadError, setLoadError] = useState(null);
+  const mountedRef = useRef(true);
 
   async function loadData() {
     setLoading(true);
@@ -128,6 +129,8 @@ export default function Settings() {
         api.db.getPref('retentionDays', 90),
       ]);
 
+      if (!mountedRef.current) return;
+
       const byProvider = {};
       for (const snap of (snaps || [])) {
         byProvider[snap.provider] = snap;
@@ -138,15 +141,17 @@ export default function Settings() {
       setLoadError(null);
     } catch (err) {
       console.error('Settings loadData error:', err);
-      setLoadError('Erreur de chargement — réessaie plus tard.');
+      if (mountedRef.current) setLoadError('Erreur de chargement — réessaie plus tard.');
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
   }
 
   useEffect(() => {
+    mountedRef.current = true;
     if (!window.api) return;
     loadData();
+    return () => { mountedRef.current = false; };
   }, []);
 
   async function handleConnect(providerId) {

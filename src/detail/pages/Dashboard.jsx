@@ -5,14 +5,16 @@ import { PROVIDER_COLORS, PROVIDER_LABELS } from '../../shared/snapshot-utils.js
 const PROVIDERS = ['claude', 'codex', 'ollama', 'zai'];
 
 async function loadData() {
-  if (!window.api?.providers?.refreshAll) return { snaps: [], series: {} };
+  if (!window.api?.providers?.refreshAll) return { snaps: [], series: {}, error: null };
 
   let snaps = [];
+  let error = null;
   try {
     const result = await window.api.providers.refreshAll();
     snaps = result || [];
   } catch (e) {
     console.error('refreshAll failed:', e);
+    error = 'Erreur de chargement — réessaie plus tard.';
   }
 
   const sinceMs = Date.now() - 24 * 3600_000;
@@ -32,20 +34,22 @@ async function loadData() {
     }
   }
 
-  return { snaps, series };
+  return { snaps, series, error };
 }
 
 export default function Dashboard() {
   const [snaps, setSnaps] = useState([]);
   const [seriesByProvider, setSeriesByProvider] = useState({});
+  const [loadError, setLoadError] = useState(null);
 
   useEffect(() => {
     let mounted = true;
     const run = () => {
-      loadData().then(({ snaps: s, series }) => {
+      loadData().then(({ snaps: s, series, error }) => {
         if (!mounted) return;
         setSnaps(s);
         setSeriesByProvider(series);
+        setLoadError(error);
       });
     };
     run();
@@ -65,6 +69,21 @@ export default function Dashboard() {
   if (allNotConfigured && !anySeriesData) {
     return (
       <div style={{ padding: 24, color: '#9ca3af', fontFamily: 'Segoe UI, sans-serif' }}>
+        {loadError && (
+          <div
+            role="alert"
+            style={{
+              backgroundColor: '#7f1d1d',
+              color: '#fecaca',
+              padding: 8,
+              borderRadius: 4,
+              fontSize: 12,
+              marginBottom: 12,
+            }}
+          >
+            {loadError}
+          </div>
+        )}
         Pas encore de données — clique Connecter dans la barre latérale Settings.
       </div>
     );
@@ -78,6 +97,21 @@ export default function Dashboard() {
 
   return (
     <div style={{ padding: 24, fontFamily: 'Segoe UI, sans-serif' }}>
+      {loadError && (
+        <div
+          role="alert"
+          style={{
+            backgroundColor: '#7f1d1d',
+            color: '#fecaca',
+            padding: 8,
+            borderRadius: 4,
+            fontSize: 12,
+            marginBottom: 12,
+          }}
+        >
+          {loadError}
+        </div>
+      )}
       <div
         style={{
           display: 'grid',
