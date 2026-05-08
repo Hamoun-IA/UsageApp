@@ -1,10 +1,48 @@
-import React from 'react';
+import React, { useState } from 'react';
+import Sidebar from './components/Sidebar.jsx';
+import Dashboard from './pages/Dashboard.jsx';
+import History from './pages/History.jsx';
+import Alerts from './pages/Alerts.jsx';
+import Settings from './pages/Settings.jsx';
+
+const VALID_PAGES = ['dashboard', 'history', 'alerts', 'settings'];
+
+function getInitialPage() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const openTo = params.get('openTo');
+    if (openTo && VALID_PAGES.includes(openTo)) return openTo;
+  } catch (_) {
+    // window may not be available in test environments without location
+  }
+  return 'dashboard';
+}
+
+const PAGE_COMPONENTS = {
+  dashboard: Dashboard,
+  history:   History,
+  alerts:    Alerts,
+  settings:  Settings,
+};
 
 export default function App() {
+  const [activePage, setActivePage] = useState(getInitialPage);
+
+  const PageComponent = PAGE_COMPONENTS[activePage] || Dashboard;
+
   return (
-    <div style={{ padding: 32, fontFamily: 'Segoe UI, sans-serif', color: '#9ca3af', background: '#0e1217', minHeight: '100vh' }}>
-      <h1 style={{ color: '#e5e7eb' }}>AI Usage Monitor — Detailed View</h1>
-      <p>Sera implémenté en M4.</p>
+    <div
+      style={{
+        display: 'flex',
+        minHeight: '100vh',
+        background: '#0e1217',
+        fontFamily: 'Segoe UI, sans-serif',
+      }}
+    >
+      <Sidebar active={activePage} onChange={setActivePage} />
+      <main style={{ flex: 1, minHeight: '100vh', background: '#0e1217' }}>
+        <PageComponent />
+      </main>
     </div>
   );
 }
