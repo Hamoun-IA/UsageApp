@@ -71,10 +71,13 @@ describe('App routing', () => {
     expect(screen.getByText('Alerts — coming up')).toBeTruthy();
   });
 
-  it('shows History page when navigated via sidebar', () => {
+  it('shows History page when navigated via sidebar', async () => {
     setLocationSearch('');
     render(<App />);
     fireEvent.click(screen.getByText('History').closest('[role="button"]'));
-    expect(screen.getByText('History — coming up')).toBeTruthy();
+    // History page renders provider selector and window selector buttons
+    await waitFor(() => {
+      expect(screen.getByText('Session 5h')).toBeTruthy();
+    });
   });
 });
