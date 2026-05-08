@@ -10,7 +10,7 @@ contextBridge.exposeInMainWorld('api', {
   },
   db: {
     recentSnapshots: (provider, sinceMs) => ipcRenderer.invoke('db:recentSnapshots', provider, sinceMs),
-    getPref:         (key) => ipcRenderer.invoke('db:getPref', key),
+    getPref:         (key, fallback) => ipcRenderer.invoke('db:getPref', key, fallback),
     setPref:         (key, value) => ipcRenderer.invoke('db:setPref', key, value),
   },
   widget: {

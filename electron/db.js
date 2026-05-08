@@ -171,7 +171,7 @@ function setPref(database, key, value) {
  * @returns {number}  Number of rows deleted.
  */
 function pruneOldSnapshots(database, retentionDays) {
-  if (typeof retentionDays !== 'number' || retentionDays <= 0) return 0;
+  if (!Number.isFinite(retentionDays) || retentionDays <= 0) return 0;
   const cutoff = Date.now() - retentionDays * 24 * 3_600_000;
   const result = database.prepare('DELETE FROM usage_snapshots WHERE fetched_at < ?').run(cutoff);
   return result.changes;

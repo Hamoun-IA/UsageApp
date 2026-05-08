@@ -78,6 +78,14 @@ const styles = {
     fontSize: 13,
     cursor: 'pointer',
   },
+  errorBanner: {
+    backgroundColor: '#7f1d1d',
+    color: '#fecaca',
+    padding: 8,
+    borderRadius: 4,
+    fontSize: 12,
+    marginBottom: 12,
+  },
   shortcutCode: {
     backgroundColor: '#1f2937',
     border: '1px solid #374151',
@@ -108,6 +116,7 @@ export default function Settings() {
   const [loading, setLoading] = useState(true);
   const [autostart, setAutostart] = useState(false);
   const [retentionDays, setRetentionDays] = useState(90);
+  const [loadError, setLoadError] = useState(null);
 
   async function loadData() {
     setLoading(true);
@@ -126,8 +135,10 @@ export default function Settings() {
       setSnapsByProvider(byProvider);
       setAutostart(!!autostartVal);
       setRetentionDays(retentionVal ?? 90);
+      setLoadError(null);
     } catch (err) {
       console.error('Settings loadData error:', err);
+      setLoadError('Erreur de chargement — réessaie plus tard.');
     } finally {
       setLoading(false);
     }
@@ -180,6 +191,9 @@ export default function Settings() {
     <div style={styles.root}>
       {/* Section 1: Connexions */}
       <section style={styles.section}>
+        {loadError && (
+          <div style={styles.errorBanner} role="alert">{loadError}</div>
+        )}
         <div style={styles.heading}>Connexions</div>
         {PROVIDERS.map((id) => {
           const snap = snapsByProvider[id];

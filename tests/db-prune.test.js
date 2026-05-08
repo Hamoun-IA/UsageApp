@@ -97,6 +97,28 @@ describe('pruneOldSnapshots', () => {
     expect(remaining).toHaveLength(1);
   });
 
+  it('returns 0 and does not delete anything when retentionDays is NaN', () => {
+    insertSnap(testDb, msAgo(1));
+    insertSnap(testDb, msAgo(200));
+
+    const deleted = pruneOldSnapshots(testDb, NaN);
+    expect(deleted).toBe(0);
+
+    const remaining = testDb.prepare('SELECT * FROM usage_snapshots').all();
+    expect(remaining).toHaveLength(2);
+  });
+
+  it('returns 0 and does not delete anything when retentionDays is Infinity', () => {
+    insertSnap(testDb, msAgo(1));
+    insertSnap(testDb, msAgo(200));
+
+    const deleted = pruneOldSnapshots(testDb, Infinity);
+    expect(deleted).toBe(0);
+
+    const remaining = testDb.prepare('SELECT * FROM usage_snapshots').all();
+    expect(remaining).toHaveLength(2);
+  });
+
   it('verifies surviving row fetched_at is the 1d-ago row', () => {
     const fetchedAt1d = msAgo(1);
     insertSnap(testDb, fetchedAt1d);

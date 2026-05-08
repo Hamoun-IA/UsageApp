@@ -262,5 +262,35 @@ describe('Settings page', () => {
         expect(btns.length).toBe(4);
       });
     });
+
+    it('shows error banner when refreshAll rejects', async () => {
+      window.api = {
+        providers: {
+          refreshAll: vi.fn().mockRejectedValue(new Error('network error')),
+        },
+        db: {
+          getPref: vi.fn().mockResolvedValue(null),
+          setPref: vi.fn().mockResolvedValue(undefined),
+        },
+        app: {
+          setAutostart: vi.fn().mockResolvedValue(true),
+          getAutostart: vi.fn().mockResolvedValue(false),
+        },
+      };
+      render(<Settings />);
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toBeTruthy();
+        expect(screen.getByText('Erreur de chargement — réessaie plus tard.')).toBeTruthy();
+      });
+    });
+
+    it('does not show error banner when refreshAll succeeds', async () => {
+      setupApi();
+      render(<Settings />);
+      await waitFor(() => {
+        expect(screen.getByText('Connexions')).toBeTruthy();
+      });
+      expect(screen.queryByRole('alert')).toBeNull();
+    });
   });
 });

@@ -219,4 +219,17 @@ describe('db:getPref / db:setPref', () => {
     const val = await handlers['db:getPref']({}, 'key');
     expect(val).toBe('second');
   });
+
+  it('returns explicit fallback when key is absent', async () => {
+    const handlers = registerWithFakeIpcMain(ipc, testDb);
+    const val = await handlers['db:getPref']({}, 'missing', 42);
+    expect(val).toBe(42);
+  });
+
+  it('returns stored value (ignoring fallback) when key exists', async () => {
+    const handlers = registerWithFakeIpcMain(ipc, testDb);
+    await handlers['db:setPref']({}, 'theme', 'dark');
+    const val = await handlers['db:getPref']({}, 'theme', 'light');
+    expect(val).toBe('dark');
+  });
 });

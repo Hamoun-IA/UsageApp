@@ -69,8 +69,8 @@ function registerIpcHandlers({ db: database }) {
   ipc.handle('db:recentSnapshots', (_e, provider, sinceMs) =>
     deps.db.recentSnapshots(database, provider, sinceMs));
 
-  ipc.handle('db:getPref', (_e, key) =>
-    deps.db.getPref(database, key));
+  ipc.handle('db:getPref', (_e, key, fallback) =>
+    deps.db.getPref(database, key, fallback));
 
   ipc.handle('db:setPref', (_e, key, value) =>
     deps.db.setPref(database, key, value));
