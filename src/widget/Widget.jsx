@@ -12,10 +12,8 @@ export default function Widget() {
 
   useEffect(() => {
     if (!rootRef.current || !window.api?.widget?.setHeight) return;
-    const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        window.api.widget.setHeight(entry.contentRect.height);
-      }
+    const observer = new ResizeObserver(() => {
+      if (rootRef.current) window.api.widget.setHeight(rootRef.current.offsetHeight);
     });
     observer.observe(rootRef.current);
     return () => observer.disconnect();
