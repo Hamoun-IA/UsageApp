@@ -1,31 +1,27 @@
 const { EventEmitter } = require('events');
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
-const { aggregateCodexTokens } = require('./codex-aggregator');
+const { parseCodexUsage } = require('./codex-parser');
+const { captureCodexCookie } = require('./codex-connect');
 
 const id = 'codex';
 const label = 'Codex';
-const authMode = 'jsonl-tail';
-const STALE_MS = 30 * 60 * 1000;
-const RATE_LIMIT_WINDOW_MS = 5 * 60 * 60 * 1000;
+const authMode = 'webview';
+const SESSION_URL = 'https://chatgpt.com/api/auth/session';
+const USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
 
 const emitter = new EventEmitter();
 
 const deps = {
-  sessionsDir: path.join(os.homedir(), '.codex', 'sessions'),
-  aggregateCodexTokens,
-  existsSync: fs.existsSync,
+  secrets: require('../secrets'),
+  captureCodexCookie,
 };
 
 async function connect() {
-  if (!deps.existsSync(deps.sessionsDir)) {
-    throw new Error('Codex CLI introuvable — installe `codex` et lance-le au moins une fois');
-  }
+  const cookie = await deps.captureCodexCookie();
+  deps.secrets.setProviderSecret(id, cookie);
 }
 
 async function disconnect() {
-  // No state to clear.
+  deps.secrets.clearProviderSecret(id);
 }
 
 function buildSnapshot(partial) {
@@ -44,69 +40,45 @@ function buildSnapshot(partial) {
   };
 }
 
-function capitalize(str) {
-  return str ? str.charAt(0).toUpperCase() + str.slice(1) : null;
-}
-
-function rateLimitsToFields(rl) {
-  if (!rl) {
-    return { sessionPct: null, weeklyPct: null, sessionResetAt: null, weeklyResetAt: null, planLevel: null };
+async function fetchAccessToken(cookie) {
+  const r = await fetch(SESSION_URL, { headers: { Cookie: cookie } });
+  if (r.status === 401 || r.status === 403) {
+    return { error: { code: 'AUTH_EXPIRED', message: 'ChatGPT session expired — reconnect Codex', retriable: false } };
   }
-  const primary = rl.primary;
-  const secondary = rl.secondary;
-  return {
-    sessionPct: primary && typeof primary.used_percent === 'number' ? primary.used_percent : null,
-    weeklyPct: secondary && typeof secondary.used_percent === 'number' ? secondary.used_percent : null,
-    sessionResetAt: primary && typeof primary.resets_at === 'number' ? primary.resets_at * 1000 : null,
-    weeklyResetAt: secondary && typeof secondary.resets_at === 'number' ? secondary.resets_at * 1000 : null,
-    planLevel: capitalize(rl.plan_type),
-  };
+  if (!r.ok) return { error: { code: 'NETWORK', message: `HTTP ${r.status} on /api/auth/session`, retriable: true } };
+  const j = await r.json();
+  if (!j || typeof j.accessToken !== 'string') {
+    return { error: { code: 'AUTH_EXPIRED', message: 'No accessToken in /api/auth/session response', retriable: false } };
+  }
+  return { token: j.accessToken };
 }
 
 async function refresh() {
-  if (!deps.existsSync(deps.sessionsDir)) {
-    return buildSnapshot({
-      error: { code: 'NOT_CONFIGURED', message: 'Connect Codex first', retriable: false },
-    });
+  const cookie = deps.secrets.getProviderSecret(id);
+  if (!cookie) {
+    return buildSnapshot({ error: { code: 'NOT_CONFIGURED', message: 'Connect Codex first', retriable: false } });
   }
-
-  const agg = await deps.aggregateCodexTokens(deps.sessionsDir);
-  const fields = rateLimitsToFields(agg.rateLimits);
-
-  if (!agg.rateLimits) {
-    return buildSnapshot({
-      approximated: true,
-      raw: agg,
-      error: {
-        code: 'QUOTA_UNKNOWN',
-        message: `Tokens utilisés: ${agg.session5hTokens} / 5h, ${agg.weekly7dTokens} / 7j (rate limits pas encore observées)`,
-        retriable: false,
-      },
-    });
+  try {
+    const tokenResp = await fetchAccessToken(cookie);
+    if (tokenResp.error) return buildSnapshot({ error: tokenResp.error });
+    const r = await fetch(USAGE_URL, { headers: { Authorization: `Bearer ${tokenResp.token}` } });
+    if (r.status === 401 || r.status === 403) {
+      return buildSnapshot({ error: { code: 'AUTH_EXPIRED', message: 'Token rejected — reconnect Codex', retriable: false } });
+    }
+    if (!r.ok) return buildSnapshot({ error: { code: 'NETWORK', message: `HTTP ${r.status} on wham/usage`, retriable: true } });
+    const json = await r.json();
+    const parsed = parseCodexUsage(json);
+    const { limitReached, ...fields } = parsed;
+    if (limitReached) {
+      return buildSnapshot({ ...fields, raw: json, error: { code: 'QUOTA_EXCEEDED', message: 'Codex rate limit reached', retriable: true } });
+    }
+    return buildSnapshot({ ...fields, raw: json });
+  } catch (e) {
+    if (e.message && e.message.includes('Unexpected ChatGPT usage response')) {
+      return buildSnapshot({ error: { code: 'PARSE', message: e.message, retriable: false } });
+    }
+    return buildSnapshot({ error: { code: 'NETWORK', message: e.message || String(e), retriable: true } });
   }
-
-  if (agg.lastRateLimitAt && Date.now() - agg.lastRateLimitAt < RATE_LIMIT_WINDOW_MS) {
-    return buildSnapshot({
-      ...fields,
-      raw: agg,
-      error: { code: 'QUOTA_EXCEEDED', message: 'Rate limit hit dans les dernières 5h', retriable: true },
-    });
-  }
-
-  if (agg.rateLimitsAt && Date.now() - agg.rateLimitsAt > STALE_MS) {
-    const minutes = Math.round((Date.now() - agg.rateLimitsAt) / 60000);
-    return buildSnapshot({
-      ...fields,
-      raw: agg,
-      error: {
-        code: 'CLI_INACTIVE',
-        message: `Codex inactif depuis ${minutes} min — données rate-limits potentiellement stale`,
-        retriable: true,
-      },
-    });
-  }
-
-  return buildSnapshot({ ...fields, raw: agg });
 }
 
 function subscribe(cb) {

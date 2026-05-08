@@ -2,150 +2,185 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('electron', () => ({
   app: { getPath: () => '/tmp' },
+  safeStorage: {
+    isEncryptionAvailable: () => true,
+    encryptString: (s) => Buffer.from(s),
+    decryptString: (b) => b.toString(),
+  },
 }));
+
+const sampleUsage = {
+  user_id: 'user-xxx',
+  plan_type: 'prolite',
+  rate_limit: {
+    allowed: true,
+    limit_reached: false,
+    primary_window: { used_percent: 4, limit_window_seconds: 18000, reset_after_seconds: 8747, reset_at: 1778276695 },
+    secondary_window: { used_percent: 16, limit_window_seconds: 604800, reset_after_seconds: 271532, reset_at: 1778539480 },
+  },
+};
+
+const SESSION_URL = 'https://chatgpt.com/api/auth/session';
+const USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
+
+function makeFetch(sessionResp, usageResp) {
+  return vi.fn().mockImplementation((url) => {
+    if (url === SESSION_URL) return Promise.resolve(sessionResp);
+    if (url === USAGE_URL) return Promise.resolve(usageResp);
+    return Promise.reject(new Error(`Unexpected fetch URL: ${url}`));
+  });
+}
 
 describe('codex.refresh()', () => {
   let codex;
-  let fakeAgg;
+  let mockSecrets;
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    global.fetch = vi.fn();
     vi.resetModules();
     codex = await import('../../electron/providers/codex.js');
-    fakeAgg = vi.fn();
-    codex.deps.sessionsDir = '/path/that/exists';
-    codex.deps.aggregateCodexTokens = fakeAgg;
-    // Stub fs.existsSync via deps injection so tests don't depend on filesystem
-    codex.deps.existsSync = vi.fn().mockReturnValue(true);
+    mockSecrets = {
+      getProviderSecret: vi.fn(),
+      setProviderSecret: vi.fn(),
+      clearProviderSecret: vi.fn(),
+    };
+    codex.deps.secrets = mockSecrets;
   });
 
-  it('returns NOT_CONFIGURED when sessionsDir does not exist', async () => {
-    codex.deps.existsSync.mockReturnValue(false);
+  it('returns NOT_CONFIGURED when no cookie stored', async () => {
+    mockSecrets.getProviderSecret.mockReturnValue(null);
     const snap = await codex.refresh();
     expect(snap.error.code).toBe('NOT_CONFIGURED');
     expect(snap.sessionPct).toBeNull();
   });
 
-  it('returns parsed snapshot with real %s when rate_limits present', async () => {
-    fakeAgg.mockResolvedValue({
-      session5hTokens: 410000,
-      weekly7dTokens: 410000,
-      rateLimits: {
-        limit_id: 'codex',
-        primary:   { used_percent: 7.5, window_minutes: 300, resets_at: 1778114687 },
-        secondary: { used_percent: 12.0, window_minutes: 10080, resets_at: 1778539480 },
-        plan_type: 'prolite',
-        rate_limit_reached_type: null,
-      },
-      rateLimitsAt: Date.now() - 60_000, // 1 min ago, fresh
-      lastRateLimitAt: null,
-    });
+  it('returns parsed snapshot on success', async () => {
+    mockSecrets.getProviderSecret.mockReturnValue('cookie=abc');
+    global.fetch = makeFetch(
+      { ok: true, status: 200, json: async () => ({ accessToken: 'fake-jwt-token' }) },
+      { ok: true, status: 200, json: async () => sampleUsage }
+    );
     const snap = await codex.refresh();
     expect(snap.error).toBeNull();
-    expect(snap.sessionPct).toBe(7.5);
-    expect(snap.weeklyPct).toBe(12.0);
-    expect(snap.sessionResetAt).toBe(1778114687 * 1000);
+    expect(snap.sessionPct).toBe(4);
+    expect(snap.weeklyPct).toBe(16);
+    expect(snap.sessionResetAt).toBe(1778276695 * 1000);
     expect(snap.weeklyResetAt).toBe(1778539480 * 1000);
     expect(snap.planLevel).toBe('Prolite');
+    expect(snap.provider).toBe('codex');
+    expect(snap.approximated).toBe(false);
   });
 
-  it('returns QUOTA_UNKNOWN when rateLimits is null but tokens were seen', async () => {
-    fakeAgg.mockResolvedValue({
-      session5hTokens: 1500,
-      weekly7dTokens: 8000,
-      rateLimits: null,
-      rateLimitsAt: null,
-      lastRateLimitAt: null,
-    });
+  it('returns AUTH_EXPIRED on 401 from /api/auth/session', async () => {
+    mockSecrets.getProviderSecret.mockReturnValue('cookie=abc');
+    global.fetch = makeFetch(
+      { ok: false, status: 401, json: async () => ({}) },
+      null
+    );
     const snap = await codex.refresh();
-    expect(snap.error.code).toBe('QUOTA_UNKNOWN');
+    expect(snap.error.code).toBe('AUTH_EXPIRED');
     expect(snap.error.retriable).toBe(false);
-    expect(snap.sessionPct).toBeNull();
-    expect(snap.weeklyPct).toBeNull();
-    expect(snap.approximated).toBe(true);
-    expect(snap.error.message).toContain('1500');
-    expect(snap.error.message).toContain('8000');
   });
 
-  it('returns QUOTA_EXCEEDED when rate-limit was hit within last 5h', async () => {
-    fakeAgg.mockResolvedValue({
-      session5hTokens: 50000,
-      weekly7dTokens: 100000,
-      rateLimits: {
-        limit_id: 'codex',
-        primary:   { used_percent: 100.0, window_minutes: 300, resets_at: 1778114687 },
-        secondary: { used_percent: 80.0, window_minutes: 10080, resets_at: 1778539480 },
-        plan_type: 'plus',
-        rate_limit_reached_type: 'primary',
-      },
-      rateLimitsAt: Date.now() - 60_000,
-      lastRateLimitAt: Date.now() - 30 * 60_000,
-    });
+  it('returns AUTH_EXPIRED on 401 from /backend-api/wham/usage', async () => {
+    mockSecrets.getProviderSecret.mockReturnValue('cookie=abc');
+    global.fetch = makeFetch(
+      { ok: true, status: 200, json: async () => ({ accessToken: 'fake-jwt-token' }) },
+      { ok: false, status: 401, json: async () => ({}) }
+    );
+    const snap = await codex.refresh();
+    expect(snap.error.code).toBe('AUTH_EXPIRED');
+    expect(snap.error.retriable).toBe(false);
+  });
+
+  it('returns AUTH_EXPIRED when /api/auth/session returns 200 but no accessToken', async () => {
+    mockSecrets.getProviderSecret.mockReturnValue('cookie=abc');
+    global.fetch = makeFetch(
+      { ok: true, status: 200, json: async () => ({ user: 'someone' }) },
+      null
+    );
+    const snap = await codex.refresh();
+    expect(snap.error.code).toBe('AUTH_EXPIRED');
+    expect(snap.error.retriable).toBe(false);
+  });
+
+  it('returns NETWORK on 503 from session endpoint', async () => {
+    mockSecrets.getProviderSecret.mockReturnValue('cookie=abc');
+    global.fetch = makeFetch(
+      { ok: false, status: 503, json: async () => ({}) },
+      null
+    );
+    const snap = await codex.refresh();
+    expect(snap.error.code).toBe('NETWORK');
+    expect(snap.error.retriable).toBe(true);
+  });
+
+  it('returns NETWORK on fetch throw', async () => {
+    mockSecrets.getProviderSecret.mockReturnValue('cookie=abc');
+    global.fetch = vi.fn().mockRejectedValue(new Error('ECONNRESET'));
+    const snap = await codex.refresh();
+    expect(snap.error.code).toBe('NETWORK');
+    expect(snap.error.retriable).toBe(true);
+  });
+
+  it('returns QUOTA_EXCEEDED with parsed values when limit_reached is true', async () => {
+    mockSecrets.getProviderSecret.mockReturnValue('cookie=abc');
+    const limitedUsage = {
+      ...sampleUsage,
+      rate_limit: { ...sampleUsage.rate_limit, limit_reached: true },
+    };
+    global.fetch = makeFetch(
+      { ok: true, status: 200, json: async () => ({ accessToken: 'fake-jwt-token' }) },
+      { ok: true, status: 200, json: async () => limitedUsage }
+    );
     const snap = await codex.refresh();
     expect(snap.error.code).toBe('QUOTA_EXCEEDED');
     expect(snap.error.retriable).toBe(true);
-    expect(snap.sessionPct).toBe(100.0);
-    expect(snap.planLevel).toBe('Plus');
+    expect(snap.sessionPct).toBe(4);
+    expect(snap.weeklyPct).toBe(16);
   });
 
-  it('returns CLI_INACTIVE when rate_limits info is older than 30 min', async () => {
-    fakeAgg.mockResolvedValue({
-      session5hTokens: 500,
-      weekly7dTokens: 5000,
-      rateLimits: {
-        limit_id: 'codex',
-        primary:   { used_percent: 4.0, window_minutes: 300, resets_at: 1778114687 },
-        secondary: { used_percent: 9.0, window_minutes: 10080, resets_at: 1778539480 },
-        plan_type: 'plus',
-        rate_limit_reached_type: null,
-      },
-      rateLimitsAt: Date.now() - 90 * 60_000, // 90 min ago, stale
-      lastRateLimitAt: null,
-    });
+  it('returns PARSE when usage response has unexpected shape', async () => {
+    mockSecrets.getProviderSecret.mockReturnValue('cookie=abc');
+    global.fetch = makeFetch(
+      { ok: true, status: 200, json: async () => ({ accessToken: 'fake-jwt-token' }) },
+      { ok: true, status: 200, json: async () => ({ rate_limit: null }) }
+    );
     const snap = await codex.refresh();
-    expect(snap.error.code).toBe('CLI_INACTIVE');
-    expect(snap.error.retriable).toBe(true);
-    expect(snap.sessionPct).toBe(4.0); // stale value still exposed
-  });
-
-  it('handles plan_type missing/null without throwing', async () => {
-    fakeAgg.mockResolvedValue({
-      session5hTokens: 100,
-      weekly7dTokens: 100,
-      rateLimits: {
-        limit_id: 'codex',
-        primary:   { used_percent: 1.0, window_minutes: 300, resets_at: 1778114687 },
-        secondary: null,
-        plan_type: null,
-        rate_limit_reached_type: null,
-      },
-      rateLimitsAt: Date.now() - 60_000,
-      lastRateLimitAt: null,
-    });
-    const snap = await codex.refresh();
-    expect(snap.planLevel).toBeNull();
-    expect(snap.weeklyPct).toBeNull();
-    expect(snap.weeklyResetAt).toBeNull();
+    expect(snap.error.code).toBe('PARSE');
+    expect(snap.error.retriable).toBe(false);
   });
 });
 
 describe('codex.connect()', () => {
   let codex;
+  let mockSecrets;
 
   beforeEach(async () => {
     vi.clearAllMocks();
     vi.resetModules();
     codex = await import('../../electron/providers/codex.js');
-    codex.deps.existsSync = vi.fn();
+    mockSecrets = {
+      getProviderSecret: vi.fn(),
+      setProviderSecret: vi.fn(),
+      clearProviderSecret: vi.fn(),
+    };
+    codex.deps.secrets = mockSecrets;
   });
 
-  it('resolves when sessionsDir exists', async () => {
-    codex.deps.existsSync.mockReturnValue(true);
-    await expect(codex.connect()).resolves.toBeUndefined();
+  it('captures cookie via webview and stores it', async () => {
+    const mockCapture = vi.fn().mockResolvedValue('__Secure-next-auth.session-token=abc123');
+    codex.deps.captureCodexCookie = mockCapture;
+    await codex.connect();
+    expect(mockCapture).toHaveBeenCalledOnce();
+    expect(mockSecrets.setProviderSecret).toHaveBeenCalledWith('codex', '__Secure-next-auth.session-token=abc123');
   });
 
-  it('throws helpful error when sessionsDir is missing', async () => {
-    codex.deps.existsSync.mockReturnValue(false);
-    await expect(codex.connect()).rejects.toThrow(/Codex CLI/);
+  it('propagates capture errors without storing', async () => {
+    const mockCapture = vi.fn().mockRejectedValue(new Error('User closed the window'));
+    codex.deps.captureCodexCookie = mockCapture;
+    await expect(codex.connect()).rejects.toThrow('User closed the window');
+    expect(mockSecrets.setProviderSecret).not.toHaveBeenCalled();
   });
 });
