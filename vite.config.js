@@ -13,6 +13,9 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    watch: {
+      ignored: ['**/.superpowers/**', '**/node_modules/**'],
+    },
   },
   resolve: {
     alias: {
