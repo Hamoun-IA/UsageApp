@@ -8,14 +8,9 @@ import Settings from './pages/Settings.jsx';
 const VALID_PAGES = ['dashboard', 'history', 'alerts', 'settings'];
 
 function getInitialPage() {
-  try {
-    const params = new URLSearchParams(window.location.search);
-    const openTo = params.get('openTo');
-    if (openTo && VALID_PAGES.includes(openTo)) return openTo;
-  } catch (_) {
-    // window may not be available in test environments without location
-  }
-  return 'dashboard';
+  const params = new URLSearchParams(window.location.search);
+  const openTo = params.get('openTo');
+  return openTo && VALID_PAGES.includes(openTo) ? openTo : 'dashboard';
 }
 
 const PAGE_COMPONENTS = {

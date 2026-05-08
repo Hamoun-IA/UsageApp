@@ -51,7 +51,7 @@ export default function Sidebar({ active, onChange }) {
               transition: 'background 0.1s, color 0.1s',
             }}
           >
-            <Icon size={18} />
+            <Icon size={18} aria-hidden="true" />
             <span>{label}</span>
           </div>
         );
