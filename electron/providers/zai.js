@@ -1,63 +1,83 @@
-/**
- * Z.ai connector (GLM / Zhipu).
- *
- * Z.ai exposes an OpenAI-compatible API at https://api.z.ai/api/paas/v4 .
- * As of this writing it does NOT expose a public per-day usage endpoint,
- * so we fall back to:
- *   - a /chat/completions ping with a 1-token request to confirm the key
- *   - a "no usage history" note guiding the user to the dashboard
- *
- * If/when an admin usage endpoint is published, swap the fetchUsage body.
- *
- * Docs: https://docs.z.ai/api-reference
- */
+const { EventEmitter } = require('events');
+const { parseZaiResponse } = require('./zai-parser');
+const { captureZaiToken } = require('./zai-connect');
 
-async function ping({ apiKey, baseUrl }) {
-  if (!apiKey) return { ok: false, error: 'Missing API key' };
-  const base = baseUrl || 'https://api.z.ai/api/paas/v4';
-  try {
-    const res = await fetch(`${base}/models`, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-    });
-    if (!res.ok) {
-      return { ok: false, status: res.status, error: (await res.text()).slice(0, 400) };
-    }
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: e.message };
-  }
+// Dependency container — allows test injection without breaking production.
+// Tests can replace deps.secrets after import to inject a mock.
+const deps = {
+  secrets: require('../secrets'),
+  captureZaiToken,
+};
+
+const id = 'zai';
+const label = 'Z.ai';
+const authMode = 'webview';
+const ENDPOINT = 'https://api.z.ai/api/monitor/usage/quota/limit';
+
+const emitter = new EventEmitter();
+
+async function connect() {
+  const token = await deps.captureZaiToken();
+  deps.secrets.setProviderSecret(id, token);
 }
 
-async function fetchUsage({ apiKey, baseUrl }) {
-  if (!apiKey) return { rows: [], note: 'Aucune clé API Z.ai configurée.' };
-  const base = baseUrl || 'https://api.z.ai/api/paas/v4';
+async function disconnect() {
+  deps.secrets.clearProviderSecret(id);
+}
 
-  // Z.ai n'expose pas d'endpoint /usage public. On confirme au moins que la clé
-  // fonctionne en listant les modèles, et on recommande la saisie manuelle ou
-  // la consultation du dashboard.
-  try {
-    const r = await fetch(`${base}/models`, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-    });
-    if (!r.ok) {
-      return { rows: [], note: `Z.ai key error ${r.status}: ${(await r.text()).slice(0, 200)}` };
-    }
-  } catch (e) {
-    return { rows: [], note: `Z.ai unreachable: ${e.message}` };
-  }
-
+function buildSnapshot(partial) {
   return {
-    rows: [],
-    note:
-      "Z.ai ne publie pas (encore) d'endpoint usage. Clé valide. Renseignez le coût via le dashboard z.ai ou activez le tracking local des appels.",
+    provider: id,
+    fetchedAt: Date.now(),
+    sessionPct: null,
+    weeklyPct: null,
+    sessionResetAt: null,
+    weeklyResetAt: null,
+    planLevel: null,
+    approximated: false,
+    raw: null,
+    error: null,
+    ...partial,
   };
 }
 
-module.exports = {
-  label: 'Z.ai (GLM)',
-  requiresApiKey: true,
-  keyKindHint: 'user',
-  docs: 'https://docs.z.ai/api-reference',
-  ping,
-  fetchUsage,
-};
+async function refresh() {
+  const token = deps.secrets.getProviderSecret(id);
+  if (!token) {
+    return buildSnapshot({
+      error: { code: 'NOT_CONFIGURED', message: 'Connect Z.ai first', retriable: false },
+    });
+  }
+  try {
+    const resp = await fetch(ENDPOINT, { headers: { Authorization: token } });
+    if (resp.status === 401 || resp.status === 403) {
+      return buildSnapshot({
+        error: { code: 'AUTH_EXPIRED', message: 'Token expired — reconnect Z.ai', retriable: false },
+      });
+    }
+    if (!resp.ok) {
+      return buildSnapshot({
+        error: { code: 'NETWORK', message: `HTTP ${resp.status}`, retriable: true },
+      });
+    }
+    const json = await resp.json();
+    const parsed = parseZaiResponse(json);
+    return buildSnapshot({ ...parsed, raw: json });
+  } catch (e) {
+    if (e.message && e.message.includes('Unexpected Z.ai response')) {
+      return buildSnapshot({
+        error: { code: 'PARSE', message: e.message, retriable: false },
+      });
+    }
+    return buildSnapshot({
+      error: { code: 'NETWORK', message: e.message || String(e), retriable: true },
+    });
+  }
+}
+
+function subscribe(cb) {
+  emitter.on('snapshot', cb);
+  return () => emitter.off('snapshot', cb);
+}
+
+module.exports = { id, label, authMode, connect, disconnect, refresh, subscribe, deps };

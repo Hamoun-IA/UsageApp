@@ -1,91 +1,94 @@
-/**
- * Ollama connector.
- *
- * Ollama is a local server, free of charge. It does not expose a usage history
- * endpoint. We surface what we can:
- *   - server reachable / version
- *   - installed models (size, family, quantization)
- *   - currently running models with their VRAM use and last activity
- *
- * To track real per-request usage you'd need to wrap the /api/chat or
- * /api/generate calls. We stub a hook for that here so the UI can be wired
- * later.
- *
- * Docs: https://github.com/ollama/ollama/blob/main/docs/api.md
- */
+const { EventEmitter } = require('events');
+const { parseOllamaSettings } = require('./ollama-parser');
+const { captureOllamaCookie } = require('./ollama-connect');
 
-async function ping({ baseUrl }) {
-  const base = baseUrl || 'http://localhost:11434';
-  try {
-    const res = await fetch(`${base}/api/version`);
-    if (!res.ok) return { ok: false, status: res.status, error: await res.text() };
-    const j = await res.json();
-    return { ok: true, version: j.version };
-  } catch (e) {
-    return { ok: false, error: `Ollama unreachable at ${base}: ${e.message}` };
-  }
+const id = 'ollama';
+const label = 'Ollama';
+const authMode = 'webview';
+const ENDPOINT = 'https://ollama.com/settings';
+
+const emitter = new EventEmitter();
+
+const deps = {
+  secrets: require('../secrets'),
+  captureOllamaCookie,
+};
+
+async function connect() {
+  const cookie = await deps.captureOllamaCookie();
+  deps.secrets.setProviderSecret(id, cookie);
 }
 
-async function fetchUsage({ baseUrl }) {
-  const base = baseUrl || 'http://localhost:11434';
-  const note =
-    "Ollama tourne en local (pas de coût). Affichage des modèles installés et chargés.";
+async function disconnect() {
+  deps.secrets.clearProviderSecret(id);
+}
 
-  let tags = null;
-  let running = null;
-  try {
-    const r = await fetch(`${base}/api/tags`);
-    if (r.ok) tags = await r.json();
-  } catch (e) {
-    return { rows: [], note: `Ollama unreachable: ${e.message}` };
-  }
-  try {
-    const r = await fetch(`${base}/api/ps`);
-    if (r.ok) running = await r.json();
-  } catch (_) {
-    /* optional */
-  }
-
-  // We synthesize a single "snapshot" row that represents the current state.
-  // Costs are zero (local). Tokens are zero (we don't get history).
-  const collected_at = new Date().toISOString();
-  const today = collected_at.slice(0, 10);
-
-  const installedCount = tags?.models?.length || 0;
-  const runningCount = running?.models?.length || 0;
-
-  const rows = [
-    {
-      provider: 'ollama',
-      collected_at,
-      period_start: today,
-      period_end: today,
-      input_tokens: 0,
-      output_tokens: 0,
-      requests: 0,
-      cost_usd: 0,
-      model: running?.models?.[0]?.name || tags?.models?.[0]?.name || null,
-      raw_json: { installed: tags?.models || [], running: running?.models || [] },
-    },
-  ];
-
+function buildSnapshot(partial) {
   return {
-    rows,
-    note,
-    extra: {
-      installed: tags?.models || [],
-      running: running?.models || [],
-      installedCount,
-      runningCount,
-    },
+    provider: id,
+    fetchedAt: Date.now(),
+    sessionPct: null,
+    weeklyPct: null,
+    sessionResetAt: null,
+    weeklyResetAt: null,
+    planLevel: null,
+    approximated: false,
+    raw: null,
+    error: null,
+    ...partial,
   };
 }
 
-module.exports = {
-  label: 'Ollama (local)',
-  requiresApiKey: false,
-  keyKindHint: null,
-  docs: 'https://github.com/ollama/ollama/blob/main/docs/api.md',
-  ping,
-  fetchUsage,
-};
+async function refresh() {
+  const cookie = deps.secrets.getProviderSecret(id);
+  if (!cookie) {
+    return buildSnapshot({
+      error: { code: 'NOT_CONFIGURED', message: 'Connect Ollama first', retriable: false },
+    });
+  }
+  try {
+    const resp = await fetch(ENDPOINT, {
+      headers: { Cookie: cookie },
+      redirect: 'follow',
+    });
+    if (resp.url && /\/signin/i.test(resp.url)) {
+      return buildSnapshot({
+        error: { code: 'AUTH_EXPIRED', message: 'Cookie expired — reconnect Ollama', retriable: false },
+      });
+    }
+    if (resp.status === 401 || resp.status === 403) {
+      return buildSnapshot({
+        error: { code: 'AUTH_EXPIRED', message: 'Auth rejected — reconnect Ollama', retriable: false },
+      });
+    }
+    if (!resp.ok) {
+      return buildSnapshot({
+        error: { code: 'NETWORK', message: `HTTP ${resp.status}`, retriable: true },
+      });
+    }
+    const html = await resp.text();
+    if (/sign[- ]in/i.test(html) && !/Cloud Usage/i.test(html)) {
+      return buildSnapshot({
+        error: { code: 'AUTH_EXPIRED', message: 'Got signin page — reconnect Ollama', retriable: false },
+      });
+    }
+    const parsed = parseOllamaSettings(html);
+    return buildSnapshot({ ...parsed, raw: { html: html.slice(0, 2000) } });
+  } catch (e) {
+    if (e.message && e.message.includes('parseOllamaSettings')) {
+      return buildSnapshot({
+        error: { code: 'PARSE', message: e.message, retriable: false },
+      });
+    }
+    return buildSnapshot({
+      error: { code: 'NETWORK', message: e.message || String(e), retriable: true },
+    });
+  }
+}
+
+function subscribe(cb) {
+  emitter.on('snapshot', cb);
+  return () => emitter.off('snapshot', cb);
+}
+
+module.exports = { id, label, authMode, connect, disconnect, refresh, subscribe, deps };

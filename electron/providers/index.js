@@ -1,27 +1,25 @@
-const anthropic = require('./anthropic');
-const openai = require('./openai');
+const claude = require('./claude');
+const codex = require('./codex');
 const ollama = require('./ollama');
 const zai = require('./zai');
 
-const REGISTRY = {
-  anthropic,
-  openai,
-  ollama,
-  zai,
-};
+const providers = { claude, codex, ollama, zai };
 
-function get(name) {
-  return REGISTRY[name];
+function getAdapter(id) {
+  const a = providers[id];
+  if (!a) throw new Error(`Unknown provider: ${id}`);
+  return a;
 }
 
-function list() {
-  return Object.entries(REGISTRY).map(([id, mod]) => ({
-    id,
-    label: mod.label,
-    requiresApiKey: mod.requiresApiKey,
-    keyKindHint: mod.keyKindHint || null,
-    docs: mod.docs || null,
-  }));
+function listAdapters() {
+  return Object.values(providers);
 }
 
-module.exports = { get, list, REGISTRY };
+// Backwards-compat aliases for existing callsites in scheduler.js / notifier.js / main.js
+// These will be removed in Task 1.8 when we rewrite the IPC layer.
+function get(id) {
+  try { return getAdapter(id); } catch { return undefined; }
+}
+function list() { return listAdapters(); }
+
+module.exports = { providers, getAdapter, listAdapters, get, list };
