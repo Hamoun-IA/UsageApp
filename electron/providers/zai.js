@@ -1,10 +1,12 @@
 const { EventEmitter } = require('events');
 const { parseZaiResponse } = require('./zai-parser');
+const { captureZaiToken } = require('./zai-connect');
 
 // Dependency container — allows test injection without breaking production.
 // Tests can replace deps.secrets after import to inject a mock.
 const deps = {
   secrets: require('../secrets'),
+  captureZaiToken,
 };
 
 const id = 'zai';
@@ -15,8 +17,8 @@ const ENDPOINT = 'https://api.z.ai/api/monitor/usage/quota/limit';
 const emitter = new EventEmitter();
 
 async function connect() {
-  // Webview flow implemented in Task 2.3
-  throw new Error('zai.connect: webview flow not yet implemented (Task 2.3)');
+  const token = await deps.captureZaiToken();
+  deps.secrets.setProviderSecret(id, token);
 }
 
 async function disconnect() {
