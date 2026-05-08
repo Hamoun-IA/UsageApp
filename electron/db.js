@@ -142,8 +142,8 @@ function recentSnapshots(database, provider, sinceMs) {
 // App preferences (key-value)
 // ---------------------------------------------------------------------------
 
-function getPref(key, fallback = null) {
-  const row = db.prepare('SELECT value FROM app_prefs WHERE key = ?').get(key);
+function getPref(database, key, fallback = null) {
+  const row = database.prepare('SELECT value FROM app_prefs WHERE key = ?').get(key);
   if (!row) return fallback;
   try {
     return JSON.parse(row.value);
@@ -152,11 +152,29 @@ function getPref(key, fallback = null) {
   }
 }
 
-function setPref(key, value) {
-  db.prepare(`
+function setPref(database, key, value) {
+  database.prepare(`
     INSERT INTO app_prefs (key, value) VALUES (?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
   `).run(key, JSON.stringify(value));
+}
+
+// ---------------------------------------------------------------------------
+// Snapshot pruning
+// ---------------------------------------------------------------------------
+
+/**
+ * Delete snapshots older than `retentionDays` days.
+ *
+ * @param {import('better-sqlite3').Database} database
+ * @param {number} retentionDays  Must be a positive number; otherwise returns 0 (no-op).
+ * @returns {number}  Number of rows deleted.
+ */
+function pruneOldSnapshots(database, retentionDays) {
+  if (!Number.isFinite(retentionDays) || retentionDays <= 0) return 0;
+  const cutoff = Date.now() - retentionDays * 24 * 3_600_000;
+  const result = database.prepare('DELETE FROM usage_snapshots WHERE fetched_at < ?').run(cutoff);
+  return result.changes;
 }
 
 // ---------------------------------------------------------------------------
@@ -192,6 +210,7 @@ module.exports = {
   // usage_snapshots
   insertSnapshot,
   recentSnapshots,
+  pruneOldSnapshots,
   // app_prefs
   getPref,
   setPref,

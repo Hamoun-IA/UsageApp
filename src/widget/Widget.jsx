@@ -63,7 +63,14 @@ export default function Widget() {
         <button onClick={refresh} disabled={refreshing} style={{ background: 'transparent', color: 'inherit', border: 'none', cursor: 'pointer' }}>
           ↻ Rafraîchir
         </button>
-        <span>⚙ ⤢</span>
+        <div style={{ display: 'flex', gap: 4 }}>
+          <button onClick={() => window.api.app.openSettings()}
+                  title="Paramètres" aria-label="Paramètres"
+                  style={{ background: 'transparent', border: 'none', color: 'inherit', cursor: 'pointer', fontSize: 12, padding: '0 4px' }}>⚙</button>
+          <button onClick={() => window.api.app.openDetail()}
+                  title="Vue détaillée" aria-label="Vue détaillée"
+                  style={{ background: 'transparent', border: 'none', color: 'inherit', cursor: 'pointer', fontSize: 12, padding: '0 4px' }}>⤢</button>
+        </div>
       </div>
     </div>
   );

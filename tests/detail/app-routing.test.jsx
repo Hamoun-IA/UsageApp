@@ -1,0 +1,128 @@
+import React from 'react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
+import App from '../../src/detail/App.jsx';
+
+let navigateToCallback = null;
+
+beforeEach(() => {
+  navigateToCallback = null;
+  // Provide a minimal window.api so Dashboard/Settings do not crash in routing tests
+  window.api = {
+    providers: {
+      refreshAll: vi.fn().mockResolvedValue([]),
+      connect: vi.fn().mockResolvedValue({}),
+      disconnect: vi.fn().mockResolvedValue({}),
+    },
+    db: {
+      recentSnapshots: vi.fn().mockResolvedValue([]),
+      getPref: vi.fn().mockResolvedValue(null),
+      setPref: vi.fn().mockResolvedValue(undefined),
+    },
+    app: {
+      setAutostart: vi.fn().mockResolvedValue(true),
+      getAutostart: vi.fn().mockResolvedValue(false),
+      onNavigateTo: vi.fn().mockImplementation((cb) => {
+        navigateToCallback = cb;
+        return vi.fn(); // unsubscribe
+      }),
+    },
+  };
+});
+
+afterEach(() => {
+  delete window.api;
+  cleanup();
+  // Reset location.search after each test
+  Object.defineProperty(window, 'location', {
+    writable: true,
+    value: { ...window.location, search: '' },
+  });
+});
+
+function setLocationSearch(search) {
+  Object.defineProperty(window, 'location', {
+    writable: true,
+    value: { ...window.location, search },
+  });
+}
+
+describe('App routing', () => {
+  it('shows Dashboard by default when no URL param', () => {
+    setLocationSearch('');
+    render(<App />);
+    // Sidebar Dashboard item is visible; the page grid or empty state is rendered
+    expect(screen.getByText('Dashboard')).toBeTruthy();
+  });
+
+  it('shows Settings when ?openTo=settings is in the URL', async () => {
+    setLocationSearch('?openTo=settings');
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByText('Connexions')).toBeTruthy();
+    });
+  });
+
+  it('falls back to Dashboard for an unknown ?openTo value', () => {
+    setLocationSearch('?openTo=bogus');
+    render(<App />);
+    // Dashboard sidebar item present = Dashboard is the active page
+    expect(screen.getAllByText('Dashboard').length).toBeGreaterThan(0);
+  });
+
+  it('navigates to Alerts page when clicking the Alerts sidebar item', () => {
+    setLocationSearch('');
+    render(<App />);
+    // Click Alerts in sidebar
+    fireEvent.click(screen.getByText('Alerts').closest('[role="button"]'));
+    expect(screen.getByText('Seuils')).toBeTruthy();
+  });
+
+  it('shows History page when navigated via sidebar', async () => {
+    setLocationSearch('');
+    render(<App />);
+    fireEvent.click(screen.getByText('History').closest('[role="button"]'));
+    // History page renders provider selector and window selector buttons
+    await waitFor(() => {
+      expect(screen.getByText('Session 5h')).toBeTruthy();
+    });
+  });
+});
+
+describe('App onNavigateTo IPC integration', () => {
+  it('switches to Settings page when onNavigateTo callback fires with "settings"', async () => {
+    setLocationSearch('');
+    render(<App />);
+    // onNavigateTo should have been registered
+    expect(window.api.app.onNavigateTo).toHaveBeenCalledTimes(1);
+    // Trigger the callback
+    await waitFor(() => expect(navigateToCallback).toBeTruthy());
+    navigateToCallback('settings');
+    await waitFor(() => {
+      expect(screen.getByText('Connexions')).toBeTruthy();
+    });
+  });
+
+  it('ignores unknown page values from onNavigateTo callback', async () => {
+    setLocationSearch('');
+    render(<App />);
+    await waitFor(() => expect(navigateToCallback).toBeTruthy());
+    navigateToCallback('bogus');
+    // Should still show Dashboard (default)
+    await waitFor(() => {
+      expect(screen.getAllByText('Dashboard').length).toBeGreaterThan(0);
+    });
+  });
+
+  it('calls the unsubscribe function returned by onNavigateTo on unmount', () => {
+    setLocationSearch('');
+    const unsubscribe = vi.fn();
+    window.api.app.onNavigateTo.mockImplementationOnce((cb) => {
+      navigateToCallback = cb;
+      return unsubscribe;
+    });
+    const { unmount } = render(<App />);
+    unmount();
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+});

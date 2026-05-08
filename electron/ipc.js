@@ -1,31 +1,100 @@
-const { ipcMain } = require('electron');
+const { ipcMain, app } = require('electron');
 const { listAdapters, getAdapter } = require('./providers');
+const db = require('./db');
+const alerts = require('./alerts');
 
-function registerIpcHandlers(deps) {
-  const { db } = deps;
+// Dependency container — single mutation surface for tests and production.
+// Tests override individual fields (e.g. ipc.deps.getAdapter = stub) before
+// calling registerIpcHandlers. Production uses the defaults set here.
+const deps = {
+  ipcMain,
+  getAdapter,
+  listAdapters,
+  db,
+  alerts,
+  app: {
+    setLoginItemSettings: (...args) => app.setLoginItemSettings(...args),
+    getLoginItemSettings: (...args) => app.getLoginItemSettings(...args),
+  },
+};
 
-  ipcMain.handle('providers:list', () => {
-    return listAdapters().map(a => ({ id: a.id, label: a.label, authMode: a.authMode }));
+function registerIpcHandlers({ db: database }) {
+  // `database` is the live SQLite connection opened at app boot (passed in by
+  // main.js). `deps.db` holds the module-level db helper functions (insertSnapshot,
+  // recentSnapshots, getPref, setPref) so tests can swap them if needed.
+  const ipc = deps.ipcMain;
+
+  ipc.handle('providers:list', () => {
+    return deps.listAdapters().map(a => ({ id: a.id, label: a.label, authMode: a.authMode }));
   });
 
-  ipcMain.handle('providers:refresh', async (_e, providerId) => {
-    const a = getAdapter(providerId);
-    return a.refresh();
+  ipc.handle('providers:refresh', async (_e, providerId) => {
+    const a = deps.getAdapter(providerId);
+    const snap = await a.refresh();
+    try {
+      deps.db.insertSnapshot(database, snap);
+    } catch (e) {
+      console.error('insertSnapshot failed:', e);
+    }
+    try {
+      deps.alerts.evaluateAlerts(database, deps.db, snap);
+    } catch (e) {
+      console.error('evaluateAlerts failed:', e);
+    }
+    return snap;
   });
 
-  ipcMain.handle('providers:refreshAll', async () => {
-    return Promise.all(listAdapters().map(a => a.refresh()));
+  ipc.handle('providers:refreshAll', async () => {
+    const adapters = deps.listAdapters();
+    const settled = await Promise.allSettled(adapters.map(a => a.refresh()));
+    const results = settled.map((r, i) => {
+      if (r.status === 'fulfilled') return r.value;
+      console.error(`refresh failed for ${adapters[i].id}:`, r.reason);
+      return null;
+    });
+    for (const snap of results) {
+      if (!snap) continue;
+      try {
+        deps.db.insertSnapshot(database, snap);
+      } catch (e) {
+        console.error('insertSnapshot failed:', e);
+      }
+      try {
+        deps.alerts.evaluateAlerts(database, deps.db, snap);
+      } catch (e) {
+        console.error('evaluateAlerts failed:', e);
+      }
+    }
+    return results.filter(Boolean);
   });
 
-  ipcMain.handle('providers:connect', async (_e, providerId) => {
-    const a = getAdapter(providerId);
+  ipc.handle('providers:connect', async (_e, providerId) => {
+    const a = deps.getAdapter(providerId);
     return a.connect();
   });
 
-  ipcMain.handle('providers:disconnect', async (_e, providerId) => {
-    const a = getAdapter(providerId);
+  ipc.handle('providers:disconnect', async (_e, providerId) => {
+    const a = deps.getAdapter(providerId);
     return a.disconnect();
   });
+
+  ipc.handle('db:recentSnapshots', (_e, provider, sinceMs) =>
+    deps.db.recentSnapshots(database, provider, sinceMs));
+
+  ipc.handle('db:getPref', (_e, key, fallback) =>
+    deps.db.getPref(database, key, fallback));
+
+  ipc.handle('db:setPref', (_e, key, value) =>
+    deps.db.setPref(database, key, value));
+
+  ipc.handle('app:setAutostart', (_e, enabled) => {
+    deps.app.setLoginItemSettings({ openAtLogin: !!enabled, args: ['--minimized'] });
+    deps.db.setPref(database, 'autostart', !!enabled);
+    return true;
+  });
+
+  ipc.handle('app:getAutostart', () =>
+    deps.app.getLoginItemSettings().openAtLogin);
 }
 
-module.exports = { registerIpcHandlers };
+module.exports = { registerIpcHandlers, deps };
