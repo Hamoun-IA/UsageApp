@@ -68,7 +68,7 @@ describe('App routing', () => {
     render(<App />);
     // Click Alerts in sidebar
     fireEvent.click(screen.getByText('Alerts').closest('[role="button"]'));
-    expect(screen.getByText('Alerts — coming up')).toBeTruthy();
+    expect(screen.getByText('Seuils')).toBeTruthy();
   });
 
   it('shows History page when navigated via sidebar', async () => {

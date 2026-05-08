@@ -1,6 +1,7 @@
 const { ipcMain, app } = require('electron');
 const { listAdapters, getAdapter } = require('./providers');
 const db = require('./db');
+const alerts = require('./alerts');
 
 // Dependency container — single mutation surface for tests and production.
 // Tests override individual fields (e.g. ipc.deps.getAdapter = stub) before
@@ -10,6 +11,7 @@ const deps = {
   getAdapter,
   listAdapters,
   db,
+  alerts,
   app: {
     setLoginItemSettings: (...args) => app.setLoginItemSettings(...args),
     getLoginItemSettings: (...args) => app.getLoginItemSettings(...args),
@@ -34,6 +36,11 @@ function registerIpcHandlers({ db: database }) {
     } catch (e) {
       console.error('insertSnapshot failed:', e);
     }
+    try {
+      deps.alerts.evaluateAlerts(database, deps.db, snap);
+    } catch (e) {
+      console.error('evaluateAlerts failed:', e);
+    }
     return snap;
   });
 
@@ -51,6 +58,11 @@ function registerIpcHandlers({ db: database }) {
         deps.db.insertSnapshot(database, snap);
       } catch (e) {
         console.error('insertSnapshot failed:', e);
+      }
+      try {
+        deps.alerts.evaluateAlerts(database, deps.db, snap);
+      } catch (e) {
+        console.error('evaluateAlerts failed:', e);
       }
     }
     return results.filter(Boolean);
