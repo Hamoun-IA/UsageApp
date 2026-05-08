@@ -1,11 +1,25 @@
-// Registry des adapters de provider. Sera rempli en Task 1.7.
+const claude = require('./claude');
+const codex = require('./codex');
+const ollama = require('./ollama');
+const zai = require('./zai');
 
-function get(name) {
-  return undefined; // No providers yet; scheduler will skip (see line 46 of scheduler.js)
+const providers = { claude, codex, ollama, zai };
+
+function getAdapter(id) {
+  const a = providers[id];
+  if (!a) throw new Error(`Unknown provider: ${id}`);
+  return a;
 }
 
-function list() {
-  return []; // Empty list; main.js IPC handler will return []
+function listAdapters() {
+  return Object.values(providers);
 }
 
-module.exports = { get, list, providers: {} };
+// Backwards-compat aliases for existing callsites in scheduler.js / notifier.js / main.js
+// These will be removed in Task 1.8 when we rewrite the IPC layer.
+function get(id) {
+  try { return getAdapter(id); } catch { return undefined; }
+}
+function list() { return listAdapters(); }
+
+module.exports = { providers, getAdapter, listAdapters, get, list };
