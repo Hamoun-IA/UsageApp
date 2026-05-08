@@ -15,7 +15,8 @@ function parseOllamaSettings(html) {
     const pct = m ? parseFloat(m[1]) : null;
     const resetEl = parent.find('[data-time]').first();
     const isoTime = resetEl.attr('data-time') || null;
-    const resetAt = isoTime ? new Date(isoTime).getTime() : null;
+    const ts = isoTime ? new Date(isoTime).getTime() : null;
+    const resetAt = Number.isFinite(ts) ? ts : null;
     return { pct, resetAt };
   };
 

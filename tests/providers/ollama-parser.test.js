@@ -30,10 +30,43 @@ describe('parseOllamaSettings', () => {
   });
 
   it('handles 0% used', () => {
-    const html = `<span>Session usage</span><span>0% used</span><div data-time="2026-05-08T16:00:00Z">Resets in 3 hours</div><span>Weekly usage</span><span>0% used</span><div data-time="2026-05-11T00:00:00Z">Resets in 2 days</div>`;
+    const html = `
+<html><body>
+  <div>
+    <span>Session usage</span><span>0% used</span>
+    <div data-time="2026-05-08T16:00:00Z">Resets in 3 hours</div>
+  </div>
+  <div>
+    <span>Weekly usage</span><span>0% used</span>
+    <div data-time="2026-05-11T00:00:00Z">Resets in 2 days</div>
+  </div>
+</body></html>
+`;
     const result = parseOllamaSettings(html);
     expect(result.sessionPct).toBe(0);
     expect(result.weeklyPct).toBe(0);
+    expect(result.sessionResetAt).toBe(new Date('2026-05-08T16:00:00Z').getTime());
+    expect(result.weeklyResetAt).toBe(new Date('2026-05-11T00:00:00Z').getTime());
+  });
+
+  it('returns null reset times when data-time is malformed', () => {
+    const html = `
+    <html><body>
+      <div>
+        <span>Session usage</span><span>10% used</span>
+        <div data-time="not-a-date">Resets soon</div>
+      </div>
+      <div>
+        <span>Weekly usage</span><span>5% used</span>
+        <div data-time="">Empty</div>
+      </div>
+    </body></html>
+  `;
+    const result = parseOllamaSettings(html);
+    expect(result.sessionResetAt).toBeNull();
+    expect(result.weeklyResetAt).toBeNull();
+    expect(result.sessionPct).toBe(10);
+    expect(result.weeklyPct).toBe(5);
   });
 
   it('returns nulls when usage section absent (free tier?)', () => {
