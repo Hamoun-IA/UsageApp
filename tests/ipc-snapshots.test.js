@@ -121,6 +121,26 @@ describe('providers:refreshAll — snapshot persistence', () => {
     expect(rows[0].provider).toBe('zai');
     expect(rows[1].provider).toBe('claude');
   });
+
+  it('persists and returns surviving adapter snapshot when one adapter rejects', async () => {
+    const snapA = makeSnap({ provider: 'zai', fetchedAt: 1_000 });
+    const adapterA = { id: 'zai',   refresh: vi.fn().mockResolvedValue(snapA) };
+    const adapterB = { id: 'claude', refresh: vi.fn().mockRejectedValue(new Error('auth error')) };
+    ipc.deps.listAdapters = () => [adapterA, adapterB];
+
+    const handlers = registerWithFakeIpcMain(ipc, testDb);
+    const results = await handlers['providers:refreshAll']({});
+
+    // Only the fulfilled snap is returned (null filtered out).
+    expect(results).toHaveLength(1);
+    expect(results[0].provider).toBe('zai');
+
+    // Only the fulfilled snap is persisted.
+    const rows = testDb.prepare('SELECT * FROM usage_snapshots').all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].provider).toBe('zai');
+    expect(rows[0].fetched_at).toBe(1_000);
+  });
 });
 
 describe('db:recentSnapshots', () => {
