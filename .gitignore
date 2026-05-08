@@ -1,0 +1,17 @@
+node_modules
+dist
+release
+.env
+.env.local
+*.log
+.DS_Store
+Thumbs.db
+.idea
+.vscode
+build/icon.ico
+
+# Brainstorm / spec scratch (mockups, MCP server state)
+.superpowers/
+
+# Claude Code local config (per-user, not project)
+.claude/

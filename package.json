@@ -1,0 +1,70 @@
+{
+  "name": "ai-usage-monitor",
+  "version": "0.1.0",
+  "description": "Monitor AI subscriptions usage (Claude, OpenAI, Ollama, Z.ai)",
+  "main": "electron/main.js",
+  "author": "David",
+  "license": "MIT",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "dev": "concurrently -k \"npm:dev:vite\" \"npm:dev:electron\"",
+    "dev:vite": "vite",
+    "dev:electron": "wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .",
+    "build": "vite build",
+    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "postinstall": "electron-builder install-app-deps",
+    "dist": "npm run build && electron-builder --win --x64",
+    "dist:portable": "npm run build && electron-builder --win portable --x64",
+    "lint": "echo \"(add eslint later)\""
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "electron-updater": "^6.3.9"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.3",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^9.0.1",
+    "cross-env": "^7.0.3",
+    "electron": "^33.0.2",
+    "electron-builder": "^25.1.8",
+    "electron-rebuild": "^3.2.9",
+    "lucide-react": "^0.453.0",
+    "postcss": "^8.4.47",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^2.13.0",
+    "tailwindcss": "^3.4.14",
+    "vite": "^5.4.10",
+    "wait-on": "^8.0.1"
+  },
+  "build": {
+    "appId": "com.david.aiusagemonitor",
+    "productName": "AI Usage Monitor",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "dist/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "AI Usage Monitor"
+    },
+    "publish": null
+  }
+}
