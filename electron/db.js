@@ -142,8 +142,8 @@ function recentSnapshots(database, provider, sinceMs) {
 // App preferences (key-value)
 // ---------------------------------------------------------------------------
 
-function getPref(key, fallback = null) {
-  const row = db.prepare('SELECT value FROM app_prefs WHERE key = ?').get(key);
+function getPref(database, key, fallback = null) {
+  const row = database.prepare('SELECT value FROM app_prefs WHERE key = ?').get(key);
   if (!row) return fallback;
   try {
     return JSON.parse(row.value);
@@ -152,8 +152,8 @@ function getPref(key, fallback = null) {
   }
 }
 
-function setPref(key, value) {
-  db.prepare(`
+function setPref(database, key, value) {
+  database.prepare(`
     INSERT INTO app_prefs (key, value) VALUES (?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
   `).run(key, JSON.stringify(value));
