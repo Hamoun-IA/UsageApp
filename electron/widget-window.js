@@ -14,7 +14,7 @@ function createWidgetWindow() {
   if (widgetWin && !widgetWin.isDestroyed()) return widgetWin;
   widgetWin = new BrowserWindow({
     width: 340,
-    height: 540,
+    height: 620,
     show: false,
     frame: false,
     transparent: true,
