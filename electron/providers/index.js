@@ -1,27 +1,11 @@
-const anthropic = require('./anthropic');
-const openai = require('./openai');
-const ollama = require('./ollama');
-const zai = require('./zai');
-
-const REGISTRY = {
-  anthropic,
-  openai,
-  ollama,
-  zai,
-};
+// Registry des adapters de provider. Sera rempli en Task 1.7.
 
 function get(name) {
-  return REGISTRY[name];
+  return undefined; // No providers yet; scheduler will skip (see line 46 of scheduler.js)
 }
 
 function list() {
-  return Object.entries(REGISTRY).map(([id, mod]) => ({
-    id,
-    label: mod.label,
-    requiresApiKey: mod.requiresApiKey,
-    keyKindHint: mod.keyKindHint || null,
-    docs: mod.docs || null,
-  }));
+  return []; // Empty list; main.js IPC handler will return []
 }
 
-module.exports = { get, list, REGISTRY };
+module.exports = { get, list, providers: {} };
