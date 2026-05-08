@@ -17,9 +17,33 @@ afterEach(() => {
 });
 
 describe('claude.refresh()', () => {
+  it('returns NOT_CONFIGURED when settings.json has no matching statusLine', async () => {
+    vi.resetModules();
+    const claude = await import('../../electron/providers/claude.js');
+    claude.deps.readClaudeSettings = vi.fn().mockReturnValue({
+      enabledPlugins: { foo: true },
+    });
+    const snap = await claude.refresh();
+    expect(snap.error.code).toBe('NOT_CONFIGURED');
+    expect(snap.error.retriable).toBe(false);
+  });
+
+  it('returns NOT_CONFIGURED when statusLine exists but is foreign (no ai-usage-monitor)', async () => {
+    vi.resetModules();
+    const claude = await import('../../electron/providers/claude.js');
+    claude.deps.readClaudeSettings = vi.fn().mockReturnValue({
+      statusLine: { type: 'command', command: 'echo "user custom"' },
+    });
+    const snap = await claude.refresh();
+    expect(snap.error.code).toBe('NOT_CONFIGURED');
+  });
+
   it('returns CLI_INACTIVE when usage file absent', async () => {
     vi.resetModules();
     const claude = await import('../../electron/providers/claude.js');
+    claude.deps.readClaudeSettings = vi.fn().mockReturnValue({
+      statusLine: { type: 'command', command: 'node -e "ai-usage-monitor write"' },
+    });
     claude.deps.usageFilePath = resolve(tempDir, 'never-exists.json');
     const snap = await claude.refresh();
     expect(snap.error.code).toBe('CLI_INACTIVE');
@@ -38,6 +62,9 @@ describe('claude.refresh()', () => {
     }));
     vi.resetModules();
     const claude = await import('../../electron/providers/claude.js');
+    claude.deps.readClaudeSettings = vi.fn().mockReturnValue({
+      statusLine: { type: 'command', command: 'node -e "ai-usage-monitor write"' },
+    });
     claude.deps.usageFilePath = usagePath;
     const snap = await claude.refresh();
     expect(snap.error).toBeNull();
@@ -56,6 +83,9 @@ describe('claude.refresh()', () => {
     }));
     vi.resetModules();
     const claude = await import('../../electron/providers/claude.js');
+    claude.deps.readClaudeSettings = vi.fn().mockReturnValue({
+      statusLine: { type: 'command', command: 'node -e "ai-usage-monitor write"' },
+    });
     claude.deps.usageFilePath = usagePath;
     const snap = await claude.refresh();
     expect(snap.error).toBeNull();
@@ -73,6 +103,9 @@ describe('claude.refresh()', () => {
     }));
     vi.resetModules();
     const claude = await import('../../electron/providers/claude.js');
+    claude.deps.readClaudeSettings = vi.fn().mockReturnValue({
+      statusLine: { type: 'command', command: 'node -e "ai-usage-monitor write"' },
+    });
     claude.deps.usageFilePath = usagePath;
     const snap = await claude.refresh();
     expect(snap.sessionPct).toBe(10);
@@ -94,6 +127,9 @@ describe('claude.refresh()', () => {
     utimesSync(usagePath, oldTime, oldTime);
     vi.resetModules();
     const claude = await import('../../electron/providers/claude.js');
+    claude.deps.readClaudeSettings = vi.fn().mockReturnValue({
+      statusLine: { type: 'command', command: 'node -e "ai-usage-monitor write"' },
+    });
     claude.deps.usageFilePath = usagePath;
     const snap = await claude.refresh();
     expect(snap.error.code).toBe('CLI_INACTIVE');
@@ -107,6 +143,9 @@ describe('claude.refresh()', () => {
     writeFileSync(usagePath, '{ not valid json');
     vi.resetModules();
     const claude = await import('../../electron/providers/claude.js');
+    claude.deps.readClaudeSettings = vi.fn().mockReturnValue({
+      statusLine: { type: 'command', command: 'node -e "ai-usage-monitor write"' },
+    });
     claude.deps.usageFilePath = usagePath;
     const snap = await claude.refresh();
     expect(snap.error.code).toBe('PARSE');

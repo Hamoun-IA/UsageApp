@@ -3,6 +3,8 @@ const fs = require('fs');
 const {
   patchClaudeSettings,
   unpatchClaudeSettings,
+  readClaudeSettings,
+  defaultClaudeSettingsPath,
   defaultUsageFilePath,
 } = require('./claude-statusline');
 
@@ -16,8 +18,16 @@ const emitter = new EventEmitter();
 const deps = {
   patchClaudeSettings,
   unpatchClaudeSettings,
+  readClaudeSettings,
+  settingsPath: defaultClaudeSettingsPath(),
   usageFilePath: defaultUsageFilePath(),
 };
+
+function isStatusLinePatched() {
+  const settings = deps.readClaudeSettings(deps.settingsPath);
+  const cmd = settings.statusLine && settings.statusLine.command;
+  return typeof cmd === 'string' && cmd.includes('ai-usage-monitor');
+}
 
 async function connect() {
   deps.patchClaudeSettings();
@@ -56,6 +66,12 @@ function parseClaudeUsage(raw) {
 }
 
 async function refresh() {
+  if (!isStatusLinePatched()) {
+    return buildSnapshot({
+      error: { code: 'NOT_CONFIGURED', message: 'Connect Claude first', retriable: false },
+    });
+  }
+
   let stat;
   try {
     stat = fs.statSync(deps.usageFilePath);
