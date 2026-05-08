@@ -1,18 +1,12 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { PROVIDER_COLORS, PROVIDER_LABELS, formatRelativeTime } from '../../shared/snapshot-utils.js';
+import { DEFAULT_THRESHOLDS } from '../../shared/alert-defaults.js';
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
 const PROVIDERS = ['claude', 'codex', 'ollama', 'zai'];
-
-const DEFAULT_THRESHOLDS = {
-  claude: { session: 90, weekly: 95, errorHours: 2 },
-  codex:  { session: 90, weekly: 95, errorHours: 2 },
-  ollama: { session: 90, weekly: 95, errorHours: 2 },
-  zai:    { session: 90, weekly: 95, errorHours: 2 },
-};
 
 const SEVEN_DAYS_MS = 7 * 24 * 3_600_000;
 
@@ -175,12 +169,16 @@ export default function Alerts() {
     }));
   }
 
+  const thresholdsRef = useRef(thresholds);
+  thresholdsRef.current = thresholds;
+
   async function handleInputBlur(provider, field, rawValue) {
     const num = Number(rawValue);
-    if (isNaN(num)) return;
+    if (Number.isNaN(num)) return;
+    // Read the latest thresholds from the ref (avoids stale closure over `thresholds`).
     const updated = {
-      ...thresholds,
-      [provider]: { ...thresholds[provider], [field]: num },
+      ...thresholdsRef.current,
+      [provider]: { ...thresholdsRef.current[provider], [field]: num },
     };
     setThresholds(updated);
     try {
@@ -190,9 +188,11 @@ export default function Alerts() {
     }
   }
 
-  // Filter alert log to last 7 days
+  // Filter alert log to last 7 days, guarding against malformed entries
   const now = Date.now();
-  const recentAlerts = alertLog.filter((entry) => now - entry.at <= SEVEN_DAYS_MS);
+  const recentAlerts = alertLog.filter(
+    (entry) => typeof entry.at === 'number' && Number.isFinite(entry.at) && now - entry.at <= SEVEN_DAYS_MS,
+  );
 
   return (
     <div style={styles.root}>

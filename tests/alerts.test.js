@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { evaluateAlerts, DEFAULT_THRESHOLDS } from '../electron/alerts.js';
+// Note: DEFAULT_THRESHOLDS is re-exported from electron/alerts.js which sources
+// it from src/shared/alert-defaults.js — the single source of truth.
 
 // ---------------------------------------------------------------------------
 // Minimal in-memory db helper (no SQLite required)

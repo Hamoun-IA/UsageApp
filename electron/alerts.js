@@ -1,15 +1,6 @@
 'use strict';
 
-// ---------------------------------------------------------------------------
-// Default thresholds — exported so Alerts.jsx and tests can use the same values.
-// ---------------------------------------------------------------------------
-
-const DEFAULT_THRESHOLDS = {
-  claude: { session: 90, weekly: 95, errorHours: 2 },
-  codex:  { session: 90, weekly: 95, errorHours: 2 },
-  ollama: { session: 90, weekly: 95, errorHours: 2 },
-  zai:    { session: 90, weekly: 95, errorHours: 2 },
-};
+const { DEFAULT_THRESHOLDS } = require('../src/shared/alert-defaults.js');
 
 const COOLDOWN_MS = 6 * 3_600_000; // 6 hours
 

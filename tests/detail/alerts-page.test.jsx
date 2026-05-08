@@ -2,17 +2,7 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent, cleanup, act } from '@testing-library/react';
 import Alerts from '../../src/detail/pages/Alerts.jsx';
-
-// ---------------------------------------------------------------------------
-// Default thresholds (mirrored from Alerts.jsx — must stay in sync)
-// ---------------------------------------------------------------------------
-
-const DEFAULT_THRESHOLDS = {
-  claude: { session: 90, weekly: 95, errorHours: 2 },
-  codex:  { session: 90, weekly: 95, errorHours: 2 },
-  ollama: { session: 90, weekly: 95, errorHours: 2 },
-  zai:    { session: 90, weekly: 95, errorHours: 2 },
-};
+import { DEFAULT_THRESHOLDS } from '../../src/shared/alert-defaults.js';
 
 // ---------------------------------------------------------------------------
 // Setup / teardown
@@ -254,5 +244,67 @@ describe('Alerts page — error state', () => {
       expect(screen.getByRole('alert')).toBeTruthy();
       expect(screen.getByText('Erreur de chargement — réessaie plus tard.')).toBeTruthy();
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 8. Rapid-blur race: two blurs before state settles both land in setPref
+// ---------------------------------------------------------------------------
+
+describe('Alerts page — rapid-blur race condition', () => {
+  it('persists both values when two different inputs are blurred rapidly', async () => {
+    const api = setupApi();
+    render(<Alerts />);
+    await waitFor(() => screen.getAllByRole('spinbutton'));
+
+    const inputs = screen.getAllByRole('spinbutton');
+    // Blur claude session (input 0) and codex session (input 3) rapidly without awaiting
+    await act(async () => {
+      fireEvent.change(inputs[0], { target: { value: '80' } });
+      fireEvent.blur(inputs[0], { target: { value: '80' } });
+      fireEvent.change(inputs[3], { target: { value: '70' } });
+      fireEvent.blur(inputs[3], { target: { value: '70' } });
+    });
+
+    await waitFor(() => {
+      expect(api.db.setPref).toHaveBeenCalled();
+    });
+
+    // The last setPref call must include both changed values
+    const calls = api.db.setPref.mock.calls.filter((c) => c[0] === 'alertThresholds');
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    const lastSaved = calls[calls.length - 1][1];
+    expect(lastSaved.claude.session).toBe(80);
+    expect(lastSaved.codex.session).toBe(70);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 9. Malformed entry.at values are filtered out
+// ---------------------------------------------------------------------------
+
+describe('Alerts page — malformed entry.at guard', () => {
+  it('excludes entries with at: undefined or at: NaN from the rendered log', async () => {
+    const now = Date.now();
+    const log = [
+      { provider: 'claude', type: 'session', threshold: 90, value: 92, at: now - 3_600_000 }, // valid
+      { provider: 'codex',  type: 'weekly',  threshold: 95, value: 97 },                       // at: undefined
+      { provider: 'ollama', type: 'session', threshold: 90, value: 91, at: NaN },              // at: NaN
+    ];
+    setupApi({ log });
+    render(<Alerts />);
+
+    await waitFor(() => {
+      // Only the valid claude entry should appear
+      expect(screen.getByText('Claude')).toBeTruthy();
+    });
+
+    // Codex and Ollama log entries must NOT be rendered (they have malformed at)
+    // The only 'Session %' label visible in the log section should be the claude one
+    const sessionLabels = screen.getAllByText('Session %');
+    expect(sessionLabels).toHaveLength(1);
+
+    // Weekly % from codex malformed entry must not appear
+    expect(screen.queryByText('Weekly %')).toBeNull();
   });
 });
