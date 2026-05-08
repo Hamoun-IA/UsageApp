@@ -16,4 +16,8 @@ contextBridge.exposeInMainWorld('api', {
   widget: {
     setHeight:   (h) => ipcRenderer.send('widget:setHeight', h),
   },
+  app: {
+    setAutostart: (enabled) => ipcRenderer.invoke('app:setAutostart', enabled),
+    getAutostart: ()        => ipcRenderer.invoke('app:getAutostart'),
+  },
 });

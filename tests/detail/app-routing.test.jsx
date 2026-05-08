@@ -1,13 +1,25 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import App from '../../src/detail/App.jsx';
 
 beforeEach(() => {
-  // Provide a minimal window.api so Dashboard does not crash in routing tests
+  // Provide a minimal window.api so Dashboard/Settings do not crash in routing tests
   window.api = {
-    providers: { refreshAll: vi.fn().mockResolvedValue([]) },
-    db: { recentSnapshots: vi.fn().mockResolvedValue([]) },
+    providers: {
+      refreshAll: vi.fn().mockResolvedValue([]),
+      connect: vi.fn().mockResolvedValue({}),
+      disconnect: vi.fn().mockResolvedValue({}),
+    },
+    db: {
+      recentSnapshots: vi.fn().mockResolvedValue([]),
+      getPref: vi.fn().mockResolvedValue(null),
+      setPref: vi.fn().mockResolvedValue(undefined),
+    },
+    app: {
+      setAutostart: vi.fn().mockResolvedValue(true),
+      getAutostart: vi.fn().mockResolvedValue(false),
+    },
   };
 });
 
@@ -36,10 +48,12 @@ describe('App routing', () => {
     expect(screen.getByText('Dashboard')).toBeTruthy();
   });
 
-  it('shows Settings when ?openTo=settings is in the URL', () => {
+  it('shows Settings when ?openTo=settings is in the URL', async () => {
     setLocationSearch('?openTo=settings');
     render(<App />);
-    expect(screen.getByText('Settings — coming up')).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.getByText('Connexions')).toBeTruthy();
+    });
   });
 
   it('falls back to Dashboard for an unknown ?openTo value', () => {

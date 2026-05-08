@@ -90,8 +90,14 @@ ipcMain.on('widget:setHeight', (_e, height) => {
 // ---------------------------- App lifecycle ----------------------------
 
 app.whenReady().then(() => {
-  db.init();
-  registerIpcHandlers({ db });
+  const dbInstance = db.init();
+  registerIpcHandlers({ db: dbInstance });
+
+  // Prune old snapshots based on retention preference (default 90 days).
+  const retentionDays = db.getPref(dbInstance, 'retentionDays', 90);
+  const pruned = db.pruneOldSnapshots(dbInstance, retentionDays);
+  if (pruned > 0) console.log(`Pruned ${pruned} stale snapshots`);
+
   createWindow();
   createTray();
 

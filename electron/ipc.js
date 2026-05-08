@@ -1,4 +1,4 @@
-const { ipcMain } = require('electron');
+const { ipcMain, app } = require('electron');
 const { listAdapters, getAdapter } = require('./providers');
 const db = require('./db');
 
@@ -10,6 +10,10 @@ const deps = {
   getAdapter,
   listAdapters,
   db,
+  app: {
+    setLoginItemSettings: (...args) => app.setLoginItemSettings(...args),
+    getLoginItemSettings: (...args) => app.getLoginItemSettings(...args),
+  },
 };
 
 function registerIpcHandlers({ db: database }) {
@@ -70,6 +74,15 @@ function registerIpcHandlers({ db: database }) {
 
   ipc.handle('db:setPref', (_e, key, value) =>
     deps.db.setPref(database, key, value));
+
+  ipc.handle('app:setAutostart', (_e, enabled) => {
+    deps.app.setLoginItemSettings({ openAtLogin: !!enabled, args: ['--minimized'] });
+    deps.db.setPref(database, 'autostart', !!enabled);
+    return true;
+  });
+
+  ipc.handle('app:getAutostart', () =>
+    deps.app.getLoginItemSettings().openAtLogin);
 }
 
 module.exports = { registerIpcHandlers, deps };
