@@ -18,4 +18,4 @@ function parseZaiResponse(raw) {
   };
 }
 
-export { parseZaiResponse };
+module.exports = { parseZaiResponse };
