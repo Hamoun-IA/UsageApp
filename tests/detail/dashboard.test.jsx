@@ -57,6 +57,17 @@ describe('Dashboard', () => {
         ).toBeTruthy();
       });
     });
+
+    it('shows empty-state when refreshAll returns empty array', async () => {
+      window.api = {
+        providers: { refreshAll: vi.fn().mockResolvedValue([]) },
+        db: { recentSnapshots: vi.fn().mockResolvedValue([]) },
+      };
+      render(<Dashboard />);
+      await waitFor(() => {
+        expect(screen.getByText(/Pas encore de données/)).toBeTruthy();
+      });
+    });
   });
 
   describe('4 cards with happy data', () => {

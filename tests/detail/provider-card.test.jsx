@@ -138,8 +138,7 @@ describe('ProviderCard', () => {
         label="Claude"
       />,
     );
-    // Sparkline renders SVG even with <2 points, but no path
-    const paths = container.querySelectorAll('path');
-    expect(paths.length).toBe(0);
+    // ProviderCard guards `points.length >= 2`, so no SVG is rendered at all
+    expect(container.querySelector('svg')).toBeNull();
   });
 });

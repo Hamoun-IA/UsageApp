@@ -39,22 +39,26 @@ export default function Dashboard() {
   const [snaps, setSnaps] = useState([]);
   const [seriesByProvider, setSeriesByProvider] = useState({});
 
-  const refresh = () => {
-    loadData().then(({ snaps: s, series }) => {
-      setSnaps(s);
-      setSeriesByProvider(series);
-    });
-  };
-
   useEffect(() => {
-    refresh();
-    const id = setInterval(refresh, 60_000);
-    return () => clearInterval(id);
+    let mounted = true;
+    const run = () => {
+      loadData().then(({ snaps: s, series }) => {
+        if (!mounted) return;
+        setSnaps(s);
+        setSeriesByProvider(series);
+      });
+    };
+    run();
+    const id = setInterval(run, 60_000);
+    return () => {
+      mounted = false;
+      clearInterval(id);
+    };
   }, []);
 
-  // Empty state: all snaps are NOT_CONFIGURED and no series data anywhere
+  // Empty state: no providers configured or all snaps are NOT_CONFIGURED, and no series data
   const allNotConfigured =
-    snaps.length > 0 &&
+    snaps.length === 0 ||
     snaps.every(s => s?.error?.code === 'NOT_CONFIGURED');
   const anySeriesData = Object.values(seriesByProvider).some(pts => pts.length > 0);
 

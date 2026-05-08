@@ -93,9 +93,7 @@ export default function ProviderCard({ snap, points, color, label }) {
           <Sparkline
             points={points}
             color={color}
-            width={undefined}
             height={36}
-            style={{ width: '100%' }}
           />
         </div>
       )}
