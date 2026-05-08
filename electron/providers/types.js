@@ -14,7 +14,7 @@
 
 /**
  * @typedef {Object} ProviderError
- * @property {string} code     - 'NOT_CONFIGURED' | 'AUTH_EXPIRED' | 'NETWORK' | 'PARSE' | 'CLI_INACTIVE' | 'QUOTA_EXCEEDED'
+ * @property {string} code     - 'NOT_CONFIGURED' | 'AUTH_EXPIRED' | 'NETWORK' | 'PARSE' | 'CLI_INACTIVE' | 'QUOTA_EXCEEDED' | 'QUOTA_UNKNOWN'
  * @property {string} message
  * @property {boolean} retriable
  */

@@ -75,6 +75,7 @@ async function refresh() {
 
   if (!agg.rateLimits) {
     return buildSnapshot({
+      approximated: true,
       raw: agg,
       error: {
         code: 'QUOTA_UNKNOWN',

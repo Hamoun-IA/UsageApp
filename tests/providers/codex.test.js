@@ -62,6 +62,7 @@ describe('codex.refresh()', () => {
     expect(snap.error.retriable).toBe(false);
     expect(snap.sessionPct).toBeNull();
     expect(snap.weeklyPct).toBeNull();
+    expect(snap.approximated).toBe(true);
     expect(snap.error.message).toContain('1500');
     expect(snap.error.message).toContain('8000');
   });
