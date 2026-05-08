@@ -8,4 +8,7 @@ contextBridge.exposeInMainWorld('api', {
     connect:     (id) => ipcRenderer.invoke('providers:connect', id),
     disconnect:  (id) => ipcRenderer.invoke('providers:disconnect', id),
   },
+  widget: {
+    setHeight:   (h) => ipcRenderer.send('widget:setHeight', h),
+  },
 });

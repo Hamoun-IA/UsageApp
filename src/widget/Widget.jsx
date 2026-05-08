@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import ProviderRow from './components/ProviderRow';
 import ProviderTabs from './components/ProviderTabs';
 import { formatRelativeTime } from '../shared/snapshot-utils';
@@ -8,6 +8,18 @@ export default function Widget() {
   const [refreshing, setRefreshing] = useState(false);
   const [lastFetch, setLastFetch] = useState(Date.now());
   const [activeTab, setActiveTab] = useState('all');
+  const rootRef = useRef(null);
+
+  useEffect(() => {
+    if (!rootRef.current || !window.api?.widget?.setHeight) return;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        window.api.widget.setHeight(entry.contentRect.height);
+      }
+    });
+    observer.observe(rootRef.current);
+    return () => observer.disconnect();
+  }, []);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
@@ -36,22 +48,20 @@ export default function Widget() {
     : snaps.filter((s) => s.provider === activeTab);
 
   return (
-    <div style={{ width: 320, background: '#0e1217', color: '#e5e7eb', padding: 14, fontFamily: 'Segoe UI, sans-serif', fontSize: 12, height: '100vh', boxSizing: 'border-box', borderRadius: 10, border: '1px solid #1f2937', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: 8, borderBottom: '1px solid #1f2937', flexShrink: 0 }}>
+    <div ref={rootRef} style={{ width: 320, background: '#0e1217', color: '#e5e7eb', padding: 14, fontFamily: 'Segoe UI, sans-serif', fontSize: 12, boxSizing: 'border-box', borderRadius: 10, border: '1px solid #1f2937' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: 8, borderBottom: '1px solid #1f2937' }}>
         <div>
           <div style={{ fontWeight: 600, fontSize: 13 }}>AI Usage</div>
           <div style={{ color: '#9ca3af', fontSize: 11 }}>Mis à jour il y a {formatRelativeTime(lastFetch)}</div>
         </div>
       </div>
-      <div style={{ flexShrink: 0 }}>
-        <ProviderTabs active={activeTab} onChange={setActiveTab} />
-      </div>
-      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+      <ProviderTabs active={activeTab} onChange={setActiveTab} />
+      <div>
         {visibleSnaps.map(s => (
           <ProviderRow key={s.provider} snap={s} onConnectClick={handleConnect} />
         ))}
       </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 10, marginTop: 6, borderTop: '1px solid #1f2937', color: '#9ca3af', fontSize: 11, flexShrink: 0 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 10, marginTop: 6, borderTop: '1px solid #1f2937', color: '#9ca3af', fontSize: 11 }}>
         <button onClick={refresh} disabled={refreshing} style={{ background: 'transparent', color: 'inherit', border: 'none', cursor: 'pointer' }}>
           ↻ Rafraîchir
         </button>

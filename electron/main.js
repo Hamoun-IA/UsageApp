@@ -3,7 +3,7 @@ const { app, BrowserWindow, ipcMain, shell, Tray, Menu, nativeImage } = require(
 
 const db = require('./db');
 const { registerIpcHandlers } = require('./ipc');
-const { toggleWidget } = require('./widget-window');
+const { toggleWidget, setWidgetHeight } = require('./widget-window');
 
 // Scheduler and notifier disabled during transition (M1.8) — will be refactored in M5.
 // const Scheduler = require('./scheduler');
@@ -81,6 +81,10 @@ function createTray() {
 ipcMain.handle('app:open-external', (_e, url) => {
   if (typeof url === 'string' && /^https?:\/\//i.test(url)) shell.openExternal(url);
   return { ok: true };
+});
+
+ipcMain.on('widget:setHeight', (_e, height) => {
+  if (typeof height === 'number' && Number.isFinite(height)) setWidgetHeight(height);
 });
 
 // ---------------------------- App lifecycle ----------------------------

@@ -2,6 +2,9 @@ const { BrowserWindow, screen } = require('electron');
 const path = require('path');
 
 let widgetWin = null;
+let lastTray = null;
+const MIN_HEIGHT = 200;
+const MAX_HEIGHT = 900;
 
 function getWidgetUrl() {
   if (process.env.NODE_ENV === 'development') {
@@ -14,7 +17,7 @@ function createWidgetWindow() {
   if (widgetWin && !widgetWin.isDestroyed()) return widgetWin;
   widgetWin = new BrowserWindow({
     width: 340,
-    height: 620,
+    height: 200,
     show: false,
     frame: false,
     transparent: true,
@@ -46,6 +49,7 @@ function positionNearTray(tray) {
 }
 
 function toggleWidget(tray) {
+  lastTray = tray;
   const w = createWidgetWindow();
   if (w.isVisible()) {
     w.hide();
@@ -56,4 +60,13 @@ function toggleWidget(tray) {
   }
 }
 
-module.exports = { createWidgetWindow, toggleWidget };
+function setWidgetHeight(contentHeight) {
+  if (!widgetWin || widgetWin.isDestroyed()) return;
+  const h = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, Math.ceil(contentHeight)));
+  const bounds = widgetWin.getBounds();
+  if (bounds.height === h) return;
+  widgetWin.setBounds({ width: bounds.width, height: h, x: bounds.x, y: bounds.y });
+  if (lastTray) positionNearTray(lastTray);
+}
+
+module.exports = { createWidgetWindow, toggleWidget, setWidgetHeight };
