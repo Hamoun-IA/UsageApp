@@ -29,11 +29,13 @@ async function captureClaudeCookie() {
         if (!SUCCESS_URL_PATTERN.test(url)) return;
         const cookies = await win.webContents.session.cookies.get({ url: 'https://claude.ai' });
         if (!cookies || cookies.length === 0) return;
-        const hasSession = cookies.some(
-          (c) => c.name === 'sessionKey' || c.name.startsWith('__Secure-next-auth'),
-        );
-        if (!hasSession) return;
         const cookieStr = cookies.map((c) => `${c.name}=${c.value}`).join('; ');
+        const orgsR = await fetch('https://claude.ai/api/organizations', {
+          headers: { Cookie: cookieStr },
+        });
+        if (!orgsR.ok) return;
+        const orgs = await orgsR.json();
+        if (!Array.isArray(orgs) || orgs.length === 0) return;
         finishOk(cookieStr);
       } catch (e) { /* retry */ }
     };
