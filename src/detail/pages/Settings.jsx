@@ -1,9 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { PROVIDER_COLORS, PROVIDER_LABELS } from '../../shared/snapshot-utils.js';
+import ShortcutInput from '../components/ShortcutInput.jsx';
 
 const PROVIDERS = ['claude', 'codex', 'ollama', 'zai'];
 
 const RETENTION_OPTIONS = [7, 30, 90, 180];
+
+const POLL_INTERVAL_OPTIONS = [
+  { value: 1,  label: '1 minute' },
+  { value: 5,  label: '5 minutes' },
+  { value: 15, label: '15 minutes' },
+];
 
 const styles = {
   root: {
@@ -116,6 +123,9 @@ export default function Settings() {
   const [loading, setLoading] = useState(true);
   const [autostart, setAutostart] = useState(false);
   const [retentionDays, setRetentionDays] = useState(90);
+  const [pollIntervalMin, setPollIntervalMin] = useState(5);
+  const [globalShortcut, setGlobalShortcut] = useState('CommandOrControl+Shift+Alt+U');
+  const [shortcutError, setShortcutError] = useState(null);
   const [loadError, setLoadError] = useState(null);
   const mountedRef = useRef(true);
 
@@ -123,10 +133,12 @@ export default function Settings() {
     setLoading(true);
     try {
       const api = window.api;
-      const [snaps, autostartVal, retentionVal] = await Promise.all([
+      const [snaps, autostartVal, retentionVal, pollVal, shortcutVal] = await Promise.all([
         api.providers.refreshAll(),
         api.db.getPref('autostart', false),
         api.db.getPref('retentionDays', 90),
+        api.db.getPref('pollIntervalMin', 5),
+        api.db.getPref('globalShortcut', 'CommandOrControl+Shift+Alt+U'),
       ]);
 
       if (!mountedRef.current) return;
@@ -138,6 +150,8 @@ export default function Settings() {
       setSnapsByProvider(byProvider);
       setAutostart(!!autostartVal);
       setRetentionDays(retentionVal ?? 90);
+      setPollIntervalMin(pollVal ?? 5);
+      setGlobalShortcut(shortcutVal || 'CommandOrControl+Shift+Alt+U');
       setLoadError(null);
     } catch (err) {
       console.error('Settings loadData error:', err);
@@ -179,6 +193,36 @@ export default function Settings() {
       await window.api.app.setAutostart(checked);
     } catch (err) {
       console.error('setAutostart failed:', err);
+    }
+  }
+
+  async function handlePollIntervalChange(e) {
+    const val = Number(e.target.value);
+    setPollIntervalMin(val);
+    try {
+      await window.api.app.setPollInterval(val);
+    } catch (err) {
+      console.error('setPollInterval failed:', err);
+    }
+  }
+
+  async function handleShortcutChange(accelerator) {
+    setShortcutError(null);
+    try {
+      const result = await window.api.app.setGlobalShortcut(accelerator);
+      if (result && result.ok) {
+        setGlobalShortcut(accelerator);
+      } else {
+        const reason = result && result.reason;
+        setShortcutError(
+          reason === 'CONFLICT'
+            ? 'Combinaison déjà utilisée par un autre process.'
+            : 'Raccourci invalide.',
+        );
+      }
+    } catch (err) {
+      console.error('setGlobalShortcut failed:', err);
+      setShortcutError('Erreur — réessaie.');
     }
   }
 
@@ -248,6 +292,26 @@ export default function Settings() {
         </div>
       </section>
 
+      {/* Section: Fréquence de rafraîchissement */}
+      <section style={styles.section}>
+        <div style={styles.heading}>Fréquence de rafraîchissement</div>
+        <div style={styles.row}>
+          <select
+            style={styles.select}
+            aria-label="Fréquence"
+            value={pollIntervalMin}
+            onChange={handlePollIntervalChange}
+          >
+            {POLL_INTERVAL_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+        </div>
+        <div style={styles.subtle}>
+          Cadence du polling background. Affecte tous les providers.
+        </div>
+      </section>
+
       {/* Section 3: Rétention DB */}
       <section style={styles.section}>
         <div style={styles.heading}>Rétention DB</div>
@@ -269,14 +333,21 @@ export default function Settings() {
         </div>
       </section>
 
-      {/* Section 4: Raccourci global */}
+      {/* Section: Raccourci global */}
       <section style={styles.section}>
         <div style={styles.heading}>Raccourci global</div>
+        {shortcutError && (
+          <div style={styles.errorBanner} role="alert">{shortcutError}</div>
+        )}
         <div style={styles.row}>
-          <code style={styles.shortcutCode}>Ctrl+Shift+Alt+U</code>
+          <ShortcutInput
+            value={globalShortcut}
+            onChange={handleShortcutChange}
+            onError={(msg) => setShortcutError(msg)}
+          />
         </div>
         <div style={styles.subtle}>
-          Ouvre la fenêtre détaillée. Configurable dans M5.
+          Ouvre/ferme le widget popup. Esc pendant la capture annule.
         </div>
       </section>
     </div>

@@ -2,6 +2,7 @@ const { ipcMain, app } = require('electron');
 const { listAdapters, getAdapter } = require('./providers');
 const db = require('./db');
 const alerts = require('./alerts');
+const refreshProviders = require('./refresh-providers');
 
 // Dependency container — single mutation surface for tests and production.
 // Tests override individual fields (e.g. ipc.deps.getAdapter = stub) before
@@ -12,6 +13,9 @@ const deps = {
   listAdapters,
   db,
   alerts,
+  refreshProviders,
+  poller: null,
+  registerShortcut: () => ({ ok: false, reason: 'NOT_WIRED' }),
   app: {
     setLoginItemSettings: (...args) => app.setLoginItemSettings(...args),
     getLoginItemSettings: (...args) => app.getLoginItemSettings(...args),
@@ -29,43 +33,24 @@ function registerIpcHandlers({ db: database }) {
   });
 
   ipc.handle('providers:refresh', async (_e, providerId) => {
-    const a = deps.getAdapter(providerId);
-    const snap = await a.refresh();
-    try {
-      deps.db.insertSnapshot(database, snap);
-    } catch (e) {
-      console.error('insertSnapshot failed:', e);
-    }
-    try {
-      deps.alerts.evaluateAlerts(database, deps.db, snap);
-    } catch (e) {
-      console.error('evaluateAlerts failed:', e);
-    }
+    const { snap } = await deps.refreshProviders.refreshAndPersist({
+      database,
+      db: deps.db,
+      alerts: deps.alerts,
+      getAdapter: deps.getAdapter,
+      providerId,
+    });
     return snap;
   });
 
   ipc.handle('providers:refreshAll', async () => {
-    const adapters = deps.listAdapters();
-    const settled = await Promise.allSettled(adapters.map(a => a.refresh()));
-    const results = settled.map((r, i) => {
-      if (r.status === 'fulfilled') return r.value;
-      console.error(`refresh failed for ${adapters[i].id}:`, r.reason);
-      return null;
+    const { snaps } = await deps.refreshProviders.refreshAllAndPersist({
+      database,
+      db: deps.db,
+      alerts: deps.alerts,
+      listAdapters: deps.listAdapters,
     });
-    for (const snap of results) {
-      if (!snap) continue;
-      try {
-        deps.db.insertSnapshot(database, snap);
-      } catch (e) {
-        console.error('insertSnapshot failed:', e);
-      }
-      try {
-        deps.alerts.evaluateAlerts(database, deps.db, snap);
-      } catch (e) {
-        console.error('evaluateAlerts failed:', e);
-      }
-    }
-    return results.filter(Boolean);
+    return snaps;
   });
 
   ipc.handle('providers:connect', async (_e, providerId) => {
@@ -95,6 +80,26 @@ function registerIpcHandlers({ db: database }) {
 
   ipc.handle('app:getAutostart', () =>
     deps.app.getLoginItemSettings().openAtLogin);
+
+  ipc.handle('app:setPollInterval', (_e, min) => {
+    if (!Number.isFinite(min) || min < 1 || min > 60) return false;
+    deps.db.setPref(database, 'pollIntervalMin', min);
+    if (deps.poller && typeof deps.poller.setInterval === 'function') {
+      deps.poller.setInterval(min * 60_000);
+    }
+    return true;
+  });
+
+  ipc.handle('app:setGlobalShortcut', (_e, accelerator) => {
+    if (typeof accelerator !== 'string' || accelerator.trim() === '') {
+      return { ok: false, reason: 'INVALID' };
+    }
+    const result = deps.registerShortcut(accelerator);
+    if (result && result.ok) {
+      deps.db.setPref(database, 'globalShortcut', accelerator);
+    }
+    return result || { ok: false, reason: 'UNKNOWN' };
+  });
 }
 
 module.exports = { registerIpcHandlers, deps };
