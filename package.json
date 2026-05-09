@@ -61,6 +61,12 @@
     "files": [
       "electron/**/*",
       "dist/**/*",
+      "build/icon.ico",
+      "build/icon.png",
+      "build/tray-normal.png",
+      "build/tray-normal@2x.png",
+      "build/tray-critical.png",
+      "build/tray-critical@2x.png",
       "src/shared/alert-defaults.json",
       "package.json"
     ],
