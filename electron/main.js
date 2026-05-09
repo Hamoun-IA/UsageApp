@@ -123,17 +123,17 @@ ipcMain.handle('app:openSettings', () => {
   return true;
 });
 
+function shortcutToggleWidget() {
+  if (tray) toggleWidget(tray);
+}
+
 function tryRegisterShortcut(accelerator) {
   if (currentShortcut) {
     try { globalShortcut.unregister(currentShortcut); } catch {}
   }
   let ok = false;
   try {
-    ok = globalShortcut.register(accelerator, () => {
-      if (!mainWindow) return;
-      if (mainWindow.isVisible()) mainWindow.hide();
-      else { mainWindow.show(); mainWindow.focus(); }
-    });
+    ok = globalShortcut.register(accelerator, shortcutToggleWidget);
   } catch (e) {
     console.warn(`globalShortcut.register threw for "${accelerator}":`, e);
     ok = false;
@@ -144,12 +144,10 @@ function tryRegisterShortcut(accelerator) {
   }
   if (currentShortcut) {
     try {
-      globalShortcut.register(currentShortcut, () => {
-        if (!mainWindow) return;
-        if (mainWindow.isVisible()) mainWindow.hide();
-        else { mainWindow.show(); mainWindow.focus(); }
-      });
-    } catch {}
+      globalShortcut.register(currentShortcut, shortcutToggleWidget);
+    } catch (e) {
+      console.warn(`fallback shortcut re-register failed for "${currentShortcut}":`, e);
+    }
   }
   return { ok: false, reason: 'CONFLICT' };
 }

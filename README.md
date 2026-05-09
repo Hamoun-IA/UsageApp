@@ -57,7 +57,7 @@ Output dans `release/`. Tester l'installeur sur ta machine avant publication.
 
 **Settings → Fréquence de rafraîchissement** : 1 / 5 / 15 minutes (défaut 5). Cadence du polling background.
 
-**Settings → Raccourci global** : combinaison clavier qui ouvre/ferme la fenêtre détaillée. Défaut
+**Settings → Raccourci global** : combinaison clavier qui ouvre/ferme le widget popup. Défaut
 `Ctrl+Shift+Alt+U`. Press-to-record : clique "Modifier", appuie sur la nouvelle combinaison, Esc pour
 annuler.
 

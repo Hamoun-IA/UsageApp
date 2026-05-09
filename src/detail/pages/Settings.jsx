@@ -347,7 +347,7 @@ export default function Settings() {
           />
         </div>
         <div style={styles.subtle}>
-          Ouvre/ferme la fenêtre détaillée. Esc pendant la capture annule.
+          Ouvre/ferme le widget popup. Esc pendant la capture annule.
         </div>
       </section>
     </div>
