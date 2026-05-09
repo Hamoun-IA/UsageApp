@@ -44,7 +44,7 @@ describe('Poller', () => {
     const p = new Poller({ refresh, onResults: () => {} });
     p.start(1000);
 
-    vi.advanceTimersByTime(3500);
+    await vi.advanceTimersByTimeAsync(3500);
     expect(refresh).toHaveBeenCalledTimes(3);
   });
 
