@@ -1,78 +1,61 @@
 #!/usr/bin/env node
 'use strict';
 
+// Derives the 4 tray icon variants from build/icon.png.
+//   - tray-normal.png       (16×16, plain downsample)
+//   - tray-normal@2x.png    (32×32, plain downsample)
+//   - tray-critical.png     (16×16, with red dot bottom-right)
+//   - tray-critical@2x.png  (32×32, with red dot bottom-right)
+//
+// Run after replacing build/icon.png with a new master icon. Output files
+// are checked in; this script doesn't run at build time.
+
 const fs = require('node:fs');
 const path = require('node:path');
-const { PNG } = require('pngjs');
-
-const FG = [229, 231, 235, 255];   // #e5e7eb
-const DOT = [220, 38, 38, 255];     // #dc2626
-
-function makeIcon({ size, withDot }) {
-  const png = new PNG({ width: size, height: size });
-
-  const margin = Math.max(1, Math.floor(size * 0.15));
-
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const i = (size * y + x) * 4;
-      const inside = x >= margin && x < size - margin && y >= margin && y < size - margin;
-      if (inside) {
-        png.data[i]     = FG[0];
-        png.data[i + 1] = FG[1];
-        png.data[i + 2] = FG[2];
-        png.data[i + 3] = FG[3];
-      } else {
-        png.data[i + 3] = 0;
-      }
-    }
-  }
-
-  const channelTop = margin + Math.floor(size * 0.2);
-  const channelBottom = size - margin - Math.floor(size * 0.2);
-  const channelInner = Math.max(1, Math.floor(size * 0.15));
-
-  for (let y = channelTop; y < channelBottom; y++) {
-    for (let x = margin + channelInner; x < size - margin - channelInner; x++) {
-      const i = (size * y + x) * 4;
-      png.data[i + 3] = 0;
-    }
-  }
-
-  if (withDot) {
-    const dotSize = Math.max(3, Math.floor(size * 0.4));
-    const dotX = size - dotSize - 1;
-    const dotY = size - dotSize - 1;
-    for (let y = dotY; y < dotY + dotSize; y++) {
-      for (let x = dotX; x < dotX + dotSize; x++) {
-        const i = (size * y + x) * 4;
-        png.data[i]     = DOT[0];
-        png.data[i + 1] = DOT[1];
-        png.data[i + 2] = DOT[2];
-        png.data[i + 3] = DOT[3];
-      }
-    }
-  }
-
-  return PNG.sync.write(png);
-}
 
 const buildDir = path.join(__dirname, '..', 'build');
-if (!fs.existsSync(buildDir)) fs.mkdirSync(buildDir, { recursive: true });
+const sourceIconPath = path.join(buildDir, 'icon.png');
 
-const targets = [
-  { name: 'tray-normal.png',     size: 16,  withDot: false },
-  { name: 'tray-normal@2x.png',  size: 32,  withDot: false },
-  { name: 'tray-critical.png',   size: 16,  withDot: true  },
-  { name: 'tray-critical@2x.png',size: 32,  withDot: true  },
-  // App icon used by electron-builder (Windows .exe / NSIS installer / portable).
-  // 256×256 is the size electron-builder expects when no .ico is provided.
-  { name: 'icon.png',            size: 256, withDot: false },
-];
+const DOT_R = 220, DOT_G = 38, DOT_B = 38, DOT_A = 255; // #dc2626
 
-for (const t of targets) {
-  const buf = makeIcon({ size: t.size, withDot: t.withDot });
-  const p = path.join(buildDir, t.name);
-  fs.writeFileSync(p, buf);
-  console.log(`Wrote ${p} (${buf.length} bytes)`);
+async function main() {
+  if (!fs.existsSync(sourceIconPath)) {
+    console.error(`Missing source icon at ${sourceIconPath}. Drop a 256×256+ PNG there.`);
+    process.exit(1);
+  }
+
+  const { Jimp } = await import('jimp');
+  const source = await Jimp.read(sourceIconPath);
+  console.log(`Source: ${source.bitmap.width}×${source.bitmap.height}`);
+
+  const dotColor = ((DOT_R << 24) | (DOT_G << 16) | (DOT_B << 8) | DOT_A) >>> 0;
+
+  const targets = [
+    { name: 'tray-normal.png',      size: 16, withDot: false },
+    { name: 'tray-normal@2x.png',   size: 32, withDot: false },
+    { name: 'tray-critical.png',    size: 16, withDot: true  },
+    { name: 'tray-critical@2x.png', size: 32, withDot: true  },
+  ];
+
+  for (const t of targets) {
+    const img = source.clone().resize({ w: t.size, h: t.size });
+
+    if (t.withDot) {
+      const dotSize = Math.max(3, Math.floor(t.size * 0.4));
+      const dotX = t.size - dotSize - 1;
+      const dotY = t.size - dotSize - 1;
+      for (let y = dotY; y < dotY + dotSize; y++) {
+        for (let x = dotX; x < dotX + dotSize; x++) {
+          img.setPixelColor(dotColor, x, y);
+        }
+      }
+    }
+
+    const outPath = path.join(buildDir, t.name);
+    await img.write(outPath);
+    const buf = fs.readFileSync(outPath);
+    console.log(`Wrote ${outPath} (${buf.length} bytes)`);
+  }
 }
+
+main().catch((e) => { console.error('Failed:', e); process.exit(1); });

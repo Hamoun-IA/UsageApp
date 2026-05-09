@@ -8,7 +8,6 @@ release
 Thumbs.db
 .idea
 .vscode
-build/icon.ico
 
 # Brainstorm / spec scratch (mockups, MCP server state)
 .superpowers/
