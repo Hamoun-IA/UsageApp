@@ -14,6 +14,8 @@ const deps = {
   db,
   alerts,
   refreshProviders,
+  poller: null,
+  registerShortcut: () => ({ ok: false, reason: 'NOT_WIRED' }),
   app: {
     setLoginItemSettings: (...args) => app.setLoginItemSettings(...args),
     getLoginItemSettings: (...args) => app.getLoginItemSettings(...args),
@@ -78,6 +80,26 @@ function registerIpcHandlers({ db: database }) {
 
   ipc.handle('app:getAutostart', () =>
     deps.app.getLoginItemSettings().openAtLogin);
+
+  ipc.handle('app:setPollInterval', (_e, min) => {
+    if (!Number.isFinite(min) || min < 1 || min > 60) return false;
+    deps.db.setPref(database, 'pollIntervalMin', min);
+    if (deps.poller && typeof deps.poller.setInterval === 'function') {
+      deps.poller.setInterval(min * 60_000);
+    }
+    return true;
+  });
+
+  ipc.handle('app:setGlobalShortcut', (_e, accelerator) => {
+    if (typeof accelerator !== 'string' || accelerator.trim() === '') {
+      return { ok: false, reason: 'INVALID' };
+    }
+    const result = deps.registerShortcut(accelerator);
+    if (result && result.ok) {
+      deps.db.setPref(database, 'globalShortcut', accelerator);
+    }
+    return result || { ok: false, reason: 'UNKNOWN' };
+  });
 }
 
 module.exports = { registerIpcHandlers, deps };
