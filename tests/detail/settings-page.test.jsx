@@ -103,11 +103,11 @@ describe('Settings page', () => {
       });
     });
 
-    it('renders the shortcut text Ctrl+Shift+Alt+U', async () => {
+    it('renders the persisted shortcut accelerator', async () => {
       setupApi();
       render(<Settings />);
       await waitFor(() => {
-        expect(screen.getByText('Ctrl+Shift+Alt+U')).toBeTruthy();
+        expect(screen.getByText('CommandOrControl+Shift+Alt+U')).toBeTruthy();
       });
     });
   });
@@ -216,11 +216,17 @@ describe('Settings page', () => {
   });
 
   describe('Rétention DB section', () => {
+    function getRetentionSelect() {
+      // Of the 2 selects on the page, the retention one carries the "30 jours" option.
+      const selects = screen.getAllByRole('combobox');
+      return selects.find((s) => s.querySelector('option[value="30"]') && s.querySelector('option[value="180"]'));
+    }
+
     it('select shows the current retention value from getPref', async () => {
       setupApi({ retentionDays: 30 });
       render(<Settings />);
       await waitFor(() => {
-        const select = screen.getByRole('combobox');
+        const select = getRetentionSelect();
         expect(Number(select.value)).toBe(30);
       });
     });
@@ -228,10 +234,10 @@ describe('Settings page', () => {
     it('calls setPref("retentionDays", N) when dropdown changed', async () => {
       const api = setupApi({ retentionDays: 90 });
       render(<Settings />);
-      await waitFor(() => screen.getByRole('combobox'));
+      await waitFor(() => getRetentionSelect());
 
       await act(async () => {
-        fireEvent.change(screen.getByRole('combobox'), { target: { value: '30' } });
+        fireEvent.change(getRetentionSelect(), { target: { value: '30' } });
       });
       expect(api.db.setPref).toHaveBeenCalledWith('retentionDays', 30);
     });
@@ -291,6 +297,63 @@ describe('Settings page', () => {
         expect(screen.getByText('Connexions')).toBeTruthy();
       });
       expect(screen.queryByRole('alert')).toBeNull();
+    });
+  });
+});
+
+describe('Settings page — M5 additions', () => {
+  beforeEach(() => {
+    window.api = {
+      providers: {
+        refreshAll: vi.fn().mockResolvedValue([]),
+        connect: vi.fn().mockResolvedValue(undefined),
+        disconnect: vi.fn().mockResolvedValue(undefined),
+      },
+      db: {
+        getPref: vi.fn(async (key, fallback) => {
+          if (key === 'pollIntervalMin') return 5;
+          if (key === 'globalShortcut') return 'CommandOrControl+Shift+Alt+U';
+          if (key === 'autostart') return false;
+          if (key === 'retentionDays') return 90;
+          return fallback;
+        }),
+        setPref: vi.fn().mockResolvedValue(undefined),
+      },
+      app: {
+        setAutostart: vi.fn().mockResolvedValue(true),
+        setPollInterval: vi.fn().mockResolvedValue(true),
+        setGlobalShortcut: vi.fn().mockResolvedValue({ ok: true }),
+      },
+    };
+  });
+
+  afterEach(() => { cleanup(); });
+
+  it('renders a Fréquence dropdown with the persisted value', async () => {
+    render(<Settings />);
+    const select = await screen.findByLabelText(/fr[ée]quence/i);
+    expect(select.value).toBe('5');
+  });
+
+  it('changing Fréquence calls app.setPollInterval', async () => {
+    render(<Settings />);
+    const select = await screen.findByLabelText(/fr[ée]quence/i);
+    fireEvent.change(select, { target: { value: '15' } });
+    await waitFor(() => {
+      expect(window.api.app.setPollInterval).toHaveBeenCalledWith(15);
+    });
+  });
+
+  it('shows an error banner when setGlobalShortcut returns { ok: false, reason: "CONFLICT" }', async () => {
+    window.api.app.setGlobalShortcut = vi.fn().mockResolvedValue({ ok: false, reason: 'CONFLICT' });
+    render(<Settings />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /modifier/i }));
+    const captureZone = screen.getByTestId('shortcut-capture');
+    fireEvent.keyDown(captureZone, { ctrlKey: true, altKey: true, key: 'm' });
+
+    await waitFor(() => {
+      expect(screen.getByText(/conflit|d[ée]j[àa] utilis/i)).toBeTruthy();
     });
   });
 });
