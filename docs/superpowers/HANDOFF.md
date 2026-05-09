@@ -1,174 +1,466 @@
-# AI Usage Monitor — Handoff (2026-05-08)
+# AI Usage Monitor — Project State & Resumption Guide
 
-Document de reprise pour relancer ce projet dans une nouvelle session Claude Code (ou pour toi si tu veux replonger plus tard).
+> **Dernière mise à jour : 2026-05-09 (fin de M5 + dist + branding)**
+>
+> Document canonique pour reprendre le projet, à toi-même dans 6 mois ou à un nouvel
+> agent IA en repartant de zéro. Contient : état actuel, conventions, pièges, idées
+> futures, cheat sheet.
+
+---
 
 ## TL;DR
 
-Refonte de l'app `C:\Codex\UsageApp\Usage App` (Electron + React) d'un dashboard Admin API vers un widget tray discret façon CodexBar qui tracke les limites d'abonnements perso (Claude Pro/Max, ChatGPT Plus, Ollama Cloud Pro, Z.ai Coding Plan).
+App Electron Windows qui agrège les usages de 4 abonnements IA personnels
+(Claude Pro, ChatGPT Plus / Codex, Ollama Cloud Pro, Z.ai Coding Plan) dans un widget
+tray + une fenêtre détaillée avec historique et alertes.
 
-**Statut** : Milestones 1 + 2 livrés. Branche `feat/widget-pivot`, 16 commits, 29 tests passants. App boote, widget popup au tray fonctionne, **Z.ai end-to-end opérationnel**.
+**État actuel : v0.2.0-widget shippée.**
+- Branche `master` à `8b58a32` (M5 + dist + branding fixes).
+- 264 tests Vitest passants.
+- Repo GitHub privé : https://github.com/Hamoun-IA/UsageApp
+- Release publiée avec NSIS installer + portable .exe attachés :
+  https://github.com/Hamoun-IA/UsageApp/releases/tag/v0.2.0-widget
+- 8 tags posés (`m1-foundation` → `m5-polish` + `v0.2.0-widget`).
 
-**Reste à faire** : M3 (3 autres providers + tabs UI), M4 (fenêtre détaillée), M5 (polish).
+Tout fonctionne. Reprends ici si tu veux pousser plus loin (idées en bas).
 
-## Documents clés
+---
 
-| Fichier | Rôle |
-|---|---|
-| [docs/superpowers/specs/2026-05-08-usage-widget-design.md](specs/2026-05-08-usage-widget-design.md) | **Spec validée** : architecture, UI, comportements, risques. Source de vérité pour le "quoi". |
-| [docs/superpowers/plans/2026-05-08-usage-widget-implementation.md](plans/2026-05-08-usage-widget-implementation.md) | **Plan d'implémentation** : M1 + M2 + M3 détaillés en TDD steps, M4 + M5 esquissés. Source de vérité pour le "comment". |
-| Cette page | Snapshot du statut + comment reprendre |
+## Historique condensé (M1 → M5)
 
-## État du repo
+Le projet a été un **pivot** depuis une app dashboard Admin API très différente. Le
+parent commit `81f4f7e` est cet état pré-pivot — quasi tout a été remplacé.
 
-- **Branche** : `feat/widget-pivot` (parent : `master` à `81f4f7e`, initial commit pré-pivot)
-- **Tags** : `m1-foundation` (= b462e54) et `m2-zai-end-to-end` (= 31b819e)
-- **Tests** : 29 passants via Vitest (`npm test`)
-- **Build** : `npx vite build` produit `dist/index.html` + `dist/widget.html` correctement
-- **Boot** : `npm run dev` lance Vite + Electron sans crash, tray icon apparaît
+| Milestone | Tag | Quoi |
+|---|---|---|
+| **M1** | `m1-foundation` | Boot Electron + tray + DB v2 + skeletons providers + widget UI minimal |
+| **M2** | `m2-zai-end-to-end` | Z.ai full implementation : login webview → JWT capture → API call → snapshot → barre progress |
+| **M3** | `m3-providers-complete` | Trois autres providers (claude, codex, ollama) à parité avec Z.ai |
+| **M3.5/3.6** | `m3.5-providers-web-flow`, `m3.6-providers-stable` | Refinements auth flows + widget tabs UI |
+| **M4** | `m4-detail-window` | Fenêtre détaillée 1200×800 avec sidebar + 4 pages (Dashboard sparklines / History recharts / Alerts seuils / Settings) |
+| **M5** | `m5-polish` | Background poller, notifications natives, tray overlay critical, configurable shortcut, boot tray-only, README rewrite, cleanup obsolete |
+| **v0.2.0** | `v0.2.0-widget` | Branding final (icon.kitchen export) + dist NSIS + portable + push GitHub |
 
-## Ce qui marche aujourd'hui (à tester manuellement)
+Chaque milestone a sa spec dans `docs/superpowers/specs/` et son plan dans
+`docs/superpowers/plans/`. Les handoffs milestone-spécifiques (`HANDOFF-M4.md`,
+`HANDOFF-M5.md`) sont gardés pour la trace.
 
-1. `cd "C:\Codex\UsageApp\Usage App" && npm run dev`
-2. Tray icon apparaît (icône PNG noire placeholder dans `build/icon.png` — à remplacer par une vraie icône en M5)
-3. Clic gauche tray → widget popup ~340×540px ouvre près du tray
-4. 4 lignes provider visibles avec leurs couleurs (Claude orange, Codex vert, Ollama purple, Z.ai cyan)
-5. Toutes affichent "Connecter" (NOT_CONFIGURED) sauf si déjà connecté
-6. Clic "Connecter" sur **Z.ai** → fenêtre login z.ai → après login, capture du JWT → fenêtre se ferme → widget refresh auto → Z.ai affiche barres Session 5h + Weekly avec ton % réel
-7. Clic "↻ Rafraîchir" → re-fetch tous providers
-8. Clic en dehors du widget → se cache. Re-clic tray → ré-apparaît.
+---
 
-⚠️ Les 3 autres providers (Claude, Codex, Ollama) ont toujours "Connecter" avec un throw → c'est attendu, ils sont stubs en M2. Ils s'implémentent en M3.
+## Architecture
 
-## Architecture installée
+### Layout source
 
 ```
-electron/
-  main.js                       # 88 lignes, propre. Tray + widget toggle + IPC wiring.
-                                # scheduler/notifier commentés (réactiver en M5).
-  preload.js                    # 11 lignes, expose window.api.providers.*
-  ipc.js                        # 5 IPC handlers : list / refresh / refreshAll / connect / disconnect
-  widget-window.js              # BrowserWindow popup 340×540 frameless transparent always-on-top
-  db.js                         # SQLite v2 schema : usage_snapshots, provider_settings, app_prefs
-  secrets.js                    # safeStorage DPAPI + getProviderSecret/setProviderSecret/clearProviderSecret
-  scheduler.js                  # ⚠ obsolète, sera refactor en M5
-  notifier.js                   # ⚠ obsolète, sera refactor en M5
+electron/                       # Main process (Node.js, CJS)
+  main.js                       # Boot tray, fenêtres, wire poller, register shortcut
+  preload.js                    # contextBridge → expose window.api.*
+  ipc.js                        # 13 IPC handlers (providers/db/app/widget) + deps pattern
+  db.js                         # SQLite v2 schema (snapshots, provider_settings, app_prefs)
+  secrets.js                    # safeStorage DPAPI wrapper (chiffre cookies + JWT par provider)
+  widget-window.js              # BrowserWindow popup ~340×N transparent always-on-top
+  refresh-providers.js          # Helper : adapter.refresh + insertSnapshot + evaluateAlerts
+  poller.js                     # Background ticker, skip-if-running guard
+  notify.js                     # Native Notifications, bundlées par provider
+  tray-state.js                 # Swap tray icon normal ↔ critical selon alertLog 6h
+  alerts.js                     # evaluateAlerts : compare snap vs seuils, append alertLog
   providers/
-    types.js                    # Snapshot + ProviderError + isValidSnapshot validator
-    index.js                    # Registry : getAdapter, listAdapters + back-compat get/list
-    zai.js                      # ✅ Z.ai full implementation (deps injection pattern)
-    zai-parser.js               # ✅ Pure parser pour /api/monitor/usage/quota/limit
-    zai-connect.js              # ✅ Webview JWT capture
-    claude.js                   # 🔲 stub (M3)
-    codex.js                    # 🔲 stub (M3)
-    ollama.js                   # 🔲 stub (M3)
+    types.js                    # Snapshot shape + ProviderError + isValidSnapshot
+    index.js                    # Registry getAdapter / listAdapters
+    zai.js, zai-parser.js, zai-connect.js
+    claude.js                   # Auth via cookies sessionKey + organization id
+    codex.js                    # ChatGPT cookie + JSONL local sessions parsing
+    ollama.js
+    *-connect.js                # Webview-based auth capture (par provider)
 
-src/
+src/                            # Renderer (React 18, ESM, bundled par Vite)
   shared/
-    snapshot-utils.js           # formatRelativeTime, severityFor, formatResetIn, PROVIDER_COLORS, PROVIDER_LABELS
-  widget/
-    main.jsx                    # Entry React du widget
-    Widget.jsx                  # 47 lignes, refresh-all + map vers ProviderRow
-    components/
-      ProgressBar.jsx           # Bar 6px hauteur
-      ProviderRow.jsx           # NOT_CONFIGURED / AUTH_EXPIRED / NETWORK / success states
-  detail/
-    main.jsx                    # Entry React fenêtre détaillée
-    App.jsx                     # Placeholder "Sera implémenté en M4"
+    snapshot-utils.js           # PROVIDER_COLORS, PROVIDER_LABELS, formatRelativeTime
+    alert-defaults.json         # Seuils par défaut (lus aussi côté main par alerts.js)
+  widget/                       # Widget popup
+    main.jsx, Widget.jsx
+    components/ProgressBar, ProviderRow
+  detail/                       # Fenêtre détaillée 1200×800
+    main.jsx, App.jsx           # Router 4 pages
+    pages/Dashboard, History, Alerts, Settings
+    components/Sidebar, Sparkline, ProviderCard, ShortcutInput
 
-tests/                          # 7 fichiers, 29 tests Vitest (happy-dom)
+build/                          # Assets statiques empaquetés dans l'asar (≥ M5+dist fix)
+  icon.png, icon.ico            # 512×512 + multi-size .ico (16/24/32/48/64/128/256)
+  tray-{normal,critical}{,@2x}.png
+
+scripts/
+  generate-tray-icons.js        # Génère les 4 tray PNG depuis build/icon.png via jimp
+                                # (one-off; run après remplacement du master icon.png)
+
+tests/                          # Vitest + happy-dom + @testing-library/react
+  31 fichiers, 264 tests
+
+docs/superpowers/
+  HANDOFF.md                    # Ce fichier (canonique current state)
+  HANDOFF-M4.md, HANDOFF-M5.md  # Historiques par milestone
+  specs/YYYY-MM-DD-*.md         # Source de vérité du "quoi"
+  plans/YYYY-MM-DD-*.md         # Source de vérité du "comment" (TDD steps)
 ```
 
-## Conventions et pièges (lessons learned de M1 + M2)
+### Boot flow
+
+1. `electron/main.js` `app.whenReady` :
+   1. `db.init()` ouvre SQLite, applique migrations, retourne instance
+   2. Wire `ipcDeps.registerShortcut = tryRegisterShortcut` AVANT `registerIpcHandlers`
+   3. Prune snapshots > retentionDays
+   4. Crée mainWindow (BrowserWindow `show: false` — tray-only boot)
+   5. Crée tray, charge initial icon via `tray-state.updateTrayIcon`
+   6. Lit pref `globalShortcut`, register avec fallback sur défaut si conflit
+   7. Construit `Poller`, wire `onResults` → `notify.fireAlertNotifications` +
+      `tray-state.updateTrayIcon`
+   8. Wire `ipcDeps.poller = poller`
+   9. `poller.start(pollIntervalMin * 60_000)` (cadence pref-driven)
+
+2. Au tick (toutes les 5 min par défaut) :
+   - Skip-if-running guard
+   - `refresh-providers.refreshAllAndPersist` → `Promise.allSettled` sur les 4 adapters
+   - Pour chaque snap fulfilled : `insertSnapshot` + `evaluateAlerts` → `newAlerts[]`
+   - Callback : `fireAlertNotifications(newAlerts)` + `updateTrayIcon`
+
+3. Quit : `before-quit` → `poller.stop()` + `globalShortcut.unregisterAll()`
+
+### Patterns à suivre
+
+| Module | Style |
+|---|---|
+| `electron/zai.js`, `claude.js`, `codex.js`, `ollama.js` | Class adapter avec `deps` object pour l'injection (cf. CJS interop ci-dessous) |
+| `electron/alerts.js`, `notify.js`, `tray-state.js` | Plain functions exportées + `deps` object si dépendance Electron native (Notification, nativeImage) |
+| `electron/refresh-providers.js` | Plain functions avec named-args object — pas de `deps` car testable directement |
+| `electron/poller.js` | Class avec constructor injection (state-bearing) |
+| Tests | Vitest + happy-dom (defaut), `@testing-library/react` pour les composants React, in-memory better-sqlite3 pour les tests DB |
+
+---
+
+## Setup pour reprendre
+
+### Sur la machine actuelle (Windows + node 20.17)
+
+Le repo est cloné à `C:\Codex\UsageApp\Usage App`. Tout y est.
+
+1. Ouvre un terminal dans le dossier
+2. Vérifie que les deps sont à jour : `npm install`
+3. Pour tester : voir « Gotcha better-sqlite3 ABI » ci-dessous
+4. Pour développer : `npm run dev` (lance Vite + Electron en parallèle)
+
+### Sur une nouvelle machine
+
+```bash
+git clone https://github.com/Hamoun-IA/UsageApp
+cd UsageApp
+npm install
+```
+
+Le `postinstall` lance `electron-builder install-app-deps` qui rebuild
+`better-sqlite3` contre l'ABI Electron. Donc `npm run dev` marche directement.
+Pour `npm test`, faire le rebuild manuel — voir ci-dessous.
+
+### Avec Claude Code (nouvelle session)
+
+Donne ce prompt :
+> *« Reprends le projet AI Usage Monitor. Lis `docs/superpowers/HANDOFF.md` puis dis-moi
+> où on en est et propose des pistes d'amélioration. »*
+
+L'agent lira ce doc et aura tout le contexte historique + actuel.
+
+---
+
+## Conventions et pièges (lessons learned)
 
 ### CJS / ESM
-- Tout sous `electron/` est **CJS** (`require`/`module.exports`) — package.json est `"type": "commonjs"`
-- Tout sous `src/` est **ESM** (Vite bundler)
-- Tests sous `tests/` sont ESM, Vitest gère l'interop
-- `vitest.config.mjs` (extension `.mjs` pour ESM dans projet CJS)
 
-### Pattern `deps` pour mocker les providers
-**`vi.mock()` n'intercepte PAS les `require()` dans des modules CJS appelés par d'autres modules CJS.** Solution adoptée dans `electron/providers/zai.js` :
+- **`electron/`** est CJS (`require`, `module.exports`) — `package.json` est `"type": "commonjs"`.
+- **`src/`** est ESM (Vite bundler).
+- **`tests/`** est ESM, Vitest gère l'interop.
+- `vitest.config.mjs` (extension `.mjs` pour ESM dans projet CJS).
+- **Si tu ajoutes un module à `electron/`** : utilise `require`. Pas `import`.
+
+### Pattern `deps` pour mocker les modules Electron en CJS
+
+`vi.mock('electron')` n'intercepte PAS les `require('electron')` faits depuis un module
+CJS appelé par un autre module CJS. Solution adoptée :
 
 ```js
+// electron/notify.js
+let _electron;
+try { _electron = require('electron'); } catch { _electron = null; }
+
 const deps = {
-  secrets: require('../secrets'),
-  captureZaiToken,
+  Notification: _electron ? _electron.Notification : null,
 };
-// ...
-async function connect() {
-  const token = await deps.captureZaiToken();
-  deps.secrets.setProviderSecret(id, token);
+
+function fireAlertNotifications(newAlerts) {
+  const Notification = deps.Notification || (_electron && _electron.Notification);
+  // ...
 }
-module.exports = { /* …, */ deps };
+
+module.exports = { fireAlertNotifications, deps };
 ```
 
-Tests :
+Le test :
+
 ```js
-const zai = await import('../../electron/providers/zai.js');
-zai.deps.secrets = { getProviderSecret: vi.fn(), /* … */ };
+const mod = await import('../electron/notify.js');
+mod.deps.Notification = FakeNotification;
 ```
 
-Tous les futurs adapters (claude.js, codex.js, ollama.js) doivent suivre ce pattern.
+Tous les modules qui touchent `electron.Notification`, `electron.nativeImage`,
+`electron.app`, `electron.ipcMain` → utilisent ce pattern. Voir `electron/ipc.js`,
+`electron/notify.js`, `electron/tray-state.js`, `electron/providers/*.js`.
 
-### Snapshot validator strict
-`isValidSnapshot` valide aussi le shape de l'erreur (`{ code: string, message: string, retriable: boolean }`). Tout snapshot retourné par `refresh()` DOIT le passer. Cf. `electron/providers/types.js`.
+`electron/refresh-providers.js` n'en a **pas** besoin car il accepte toutes ses deps en
+named-args object — pratique modulaire au choix selon le cas.
 
-### Helpers DB disponibles
-```js
-const db = require('./db');
-db.insertSnapshot(dbInstance, snap);
-db.recentSnapshots(dbInstance, provider, sinceMs);
-db.getProviderSettings(provider);
-db.upsertProviderSettings({ provider, connected, ... });
-db.getPref(key);
-db.setPref(key, value);
+### Pièges Vitest fakeTimers
+
+- `vi.advanceTimersByTime()` (sync) ne flush **pas** les microtasks Promise natives entre
+  les firings. Si ton code teste un async `setInterval` callback, utilise
+  **`await vi.advanceTimersByTimeAsync()`**.
+- Sinon les ticks sautés par un guard du type "skip-if-running" feront échouer le test
+  (cf. fix `b750d88` dans `tests/poller.test.js`).
+
+### Two-ABI dance better-sqlite3
+
+`better-sqlite3` a un binaire natif lié à l'ABI Node.js. Mais Electron embarque sa
+propre version de Node avec une ABI différente :
+
+- **Electron 33** = NODE_MODULE_VERSION 130
+- **Node 20.17** = NODE_MODULE_VERSION 115
+
+Le `postinstall` (`electron-builder install-app-deps`) compile pour Electron (130). Donc
+au début, `npm test` plante.
+
+**Pour faire tourner les tests** :
+```bash
+cd node_modules/better-sqlite3 && npm run build-release && cd ../..
+npm test
 ```
 
-### Helpers secrets disponibles
-```js
-const { setProviderSecret, getProviderSecret, clearProviderSecret } = require('./secrets');
-setProviderSecret('zai', jwtString);            // chiffré DPAPI
-const jwt = getProviderSecret('zai');           // string ou null
-clearProviderSecret('zai');                     // unlink
+**Pour revenir au mode dev/dist Electron** :
+```bash
+npm run rebuild     # = electron-rebuild -f -w better-sqlite3
 ```
 
-## Comment reprendre dans une nouvelle session Claude
+⚠ Si tu changes de version Node ou Electron, refais le bon rebuild d'abord. Si `npm test`
+ou `npm run dev` plante avec un message *« was compiled against a different Node.js
+version using NODE_MODULE_VERSION X »*, c'est ça.
 
-1. **Donne-lui le contexte** :
-   > "Reprends ce projet. Lis `docs/superpowers/HANDOFF.md`, puis le plan d'implémentation, puis attaque-toi au Milestone 3."
+### `build/` doit être dans `package.json > build.files`
 
-2. **Le plan M3 est détaillé** dans le doc d'implémentation, à partir de la section "Milestone 3 — Provider portfolio". 9 tasks bite-sized, mêmes patterns TDD que M1 + M2.
+electron-builder strippe par défaut tout ce qui n'est pas dans `build.files` lors du
+packaging asar. Conséquence : si tu ajoutes un asset dans `build/` qui est requis par
+`electron/main.js` ou un module main, **ajoute-le explicitement dans `build.files`**.
 
-3. **Pour M3, dis-lui d'utiliser `superpowers:subagent-driven-development`** — c'est ce qu'on a fait pour M1 + M2 et ça marche bien. Skill : Subagent-Driven Development.
+État actuel :
+```json
+"files": [
+  "electron/**/*",
+  "dist/**/*",
+  "build/icon.ico",
+  "build/icon.png",
+  "build/tray-normal.png",
+  "build/tray-normal@2x.png",
+  "build/tray-critical.png",
+  "build/tray-critical@2x.png",
+  "src/shared/alert-defaults.json",
+  "package.json"
+]
+```
 
-4. **Avant de lancer M3 implementation**, deux investigations valent un check rapide :
-   - **Claude Code statusLine** : vérifier que `~/.claude/usage-latest.json` (ou path équivalent post-issue #55333) est bien généré par la dernière version de Claude. Lancer `claude` une fois et inspecter `~/.claude/`.
-   - **Codex sessions JSONL shape** : ouvrir un fichier `~/.codex/sessions/*.jsonl` réel et confirmer la structure des events (les Tasks 3.6 supposent `{ timestamp, usage: { input_tokens, output_tokens } }`).
+Si tu ajoutes un nouveau module dans `electron/` qui require un autre fichier dans `src/`
+ou ailleurs, ajoute aussi le path à `build.files`. Sinon le crash en prod sera silencieux
+(`require('...').missing` se mange en `Cannot find module`).
 
-5. **M4 + M5 sont esquissés** mais pas en TDD steps. Il faudra écrire leurs plans détaillés au fur et à mesure (le plan a la convention "plan détaillé à écrire après MN" — c'est volontaire pour ne pas figer trop tôt).
+### Cache d'icônes Windows agressif
 
-## Petites dettes techniques à régler en M5
+Quand tu rebuilds le `.exe` au même chemin, Windows Explorer affiche encore l'ancienne
+icône (cache). Solutions :
+```powershell
+ie4uinit.exe -ClearIconCache
+# ou
+Stop-Process -Name explorer -Force; Start-Process explorer
+```
 
-- `electron/scheduler.js` et `electron/notifier.js` sont sur disque mais désactivés dans main.js. Référencent l'ancienne API DB. À refondre.
-- `build/icon.png` est un placeholder PNG noir. Remplacer par une vraie icône.
-- `vite.config.js` a un warning "CJS build of Vite's Node API is deprecated". À surveiller.
-- Pas de tests E2E Electron (BrowserWindow). Manuel uniquement. OK pour l'instant.
-- `coverage` v8 dépendance ajoutée mais pas utilisée — `npm test -- --coverage` marche.
+### Vrai .ico pour le packaging .exe
 
-## Memory persistante Claude (Windows user)
+electron-builder veut un `.ico` avec **au moins une entrée 256×256** pour le packaging
+NSIS. Le favicon.ico de icon.kitchen ne contient que 16+32 → rejet. Solution actuelle :
+on commit `build/icon.ico` multi-size (généré une fois par electron-builder lui-même
+puis copié, ~25 KB).
 
-Saved memory entries pour contexte cross-session :
-- `project_usage_app_pivot.md` — pivot projet
-- `reference_data_sources.md` — endpoints + auth pour les 4 providers (research live via Chrome MCP)
-- `feedback_data_freshness.md` — préférence : ne jamais afficher de stale silently
+Si tu changes l'icône du projet :
+1. Drop le nouveau master en 256×256+ dans `build/icon.png`
+2. Regénère les tray PNGs : `node scripts/generate-tray-icons.js`
+3. Pour le .ico, soit tu fournis ton propre multi-size .ico, soit tu laisses
+   electron-builder en générer un (set `package.json win.icon = "build/icon.png"`),
+   puis copie `release/.icon-ico/icon.ico` vers `build/icon.ico` après le premier run.
 
-Toute nouvelle session de Claude Code lira ces memories et aura le contexte.
+### Boot tray-only
 
-## Quand tout est fini
+`BrowserWindow({ show: false })` est essentiel pour que la fenêtre détaillée n'apparaisse
+pas au boot. Sans ça, l'app ressemble à un programme classique au lieu d'une tray app.
+La fenêtre n'apparaît qu'à action user (tray double-click, IPC `app:openDetail/openSettings`,
+shortcut global → toggle widget popup).
 
-Quand M5 est livré et testé manuel par toi :
-1. Squash + merge `feat/widget-pivot` → `master`
-2. Tag de release (ex. `v0.2.0-widget`)
-3. Build NSIS + portable : `npm run dist`
-4. Test installeur sur ta machine
-5. Déposer la release ou utiliser le portable directement
+### Test flaky pré-existant
+
+`tests/detail/alerts-page.test.jsx` a un test (`getAllByText('Session %')`) qui flake
+de temps en temps en suite complète mais passe en isolation. Documenté depuis M5,
+pas introduit par M5. Re-run le test pour le débloquer si tu le rencontres.
+
+### Génération des tray icons
+
+Le script `scripts/generate-tray-icons.js` lit `build/icon.png` (master 256+) et produit
+les 4 tray PNGs (16/32 + critical avec dot rouge bottom-right) via `jimp`.
+
+⚠ `jimp` 1.x est ESM-only. Le script utilise `await import('jimp')` pour le charger en
+CJS via dynamic import. Si tu modifies le script, garde ce pattern.
+
+---
+
+## Cheat sheet commandes
+
+```bash
+# Dev
+npm run dev              # Vite + Electron en parallèle, hot reload
+npm test                 # Vitest run (262-264 tests)
+npm run test:watch       # Vitest watch mode
+npm run rebuild          # better-sqlite3 → ABI Electron
+cd node_modules/better-sqlite3 && npm run build-release && cd ../..
+                         # better-sqlite3 → ABI Node (pour tests)
+
+# Build
+npm run build            # Vite build → dist/ (frontend assemblé)
+npm run dist             # → release/AI Usage Monitor Setup 0.1.0.exe + portable
+npm run dist:portable    # portable seul (skip NSIS)
+
+# Icons
+node scripts/generate-tray-icons.js
+                         # Régénère les 4 tray PNGs depuis build/icon.png
+
+# Git/release
+git tag vX.Y.Z -m "..."
+git push --tags
+gh release create vX.Y.Z "release/AI Usage Monitor Setup 0.1.0.exe" "release/AI Usage Monitor 0.1.0.exe" --title "..." --notes "..."
+
+# Inspection asar (debug "fichier introuvable en prod")
+npx asar list release/win-unpacked/resources/app.asar | grep <pattern>
+
+# Nettoyage Windows icon cache
+ie4uinit.exe -ClearIconCache
+```
+
+---
+
+## Idées futures (M6+)
+
+Aucune n'est commencée. Toutes sont indépendantes. Choisis selon ton envie.
+
+### Améliorations UX / branding
+
+- **Vraie icône designed** — l'icône actuelle est un export icon.kitchen sympathique
+  mais générique. Un design plus propre (avec un graphiste ou via Midjourney) ferait du
+  bien.
+- **Captures d'écran dans le README** — section actuellement vide.
+- **Animation tray** quand un quota est dépassé (clignotement subtil).
+- **Couleurs de barre dynamiques** — devient orange à 80 %, rouge à 95 %.
+
+### Nouveaux providers
+
+- **Cursor Pro** — l'app peut lire `~/.cursor/sessions` ou similaire. À investiguer.
+- **Gemini Advanced** — Google n'expose probablement pas d'API d'usage stable, à voir.
+- **Anthropic API direct** (clé API perso) — dashboard.anthropic.com a une page usage
+  qu'on pourrait scraper, ou utiliser l'API officielle si elle expose les quotas.
+- **Mistral / Le Chat Pro** — à voir.
+
+### Auto-update
+
+`electron-updater` est déjà dans les dependencies (depuis M1) mais pas wired. Setup à
+faire :
+1. Configurer un canal de release (GitHub Releases marche bien avec electron-updater).
+2. Ajouter l'init dans `electron/main.js` au boot.
+3. Tester avec une bump de version + push tag.
+
+### Cross-platform (macOS, Linux)
+
+L'app utilise des trucs platform-specific (DPAPI Windows pour les secrets, registry
+auto-launch via `setLoginItemSettings`). Pour macOS :
+- `safeStorage.encryptString` marche aussi sur macOS (Keychain).
+- `app.setLoginItemSettings` marche.
+- Tray icon : besoin de variantes template `.png` pour le rendu macOS dark mode auto.
+- Build : `electron-builder --mac --x64 --arm64` (M1 + Intel).
+
+Linux est plus exotique : safeStorage existe mais utilise libsecret (à installer).
+
+### Statusline Claude Code
+
+L'idée originale (cf. `memory/project_usage_app_pivot.md`) était d'avoir une intégration
+avec la statusline de Claude Code (le fichier `~/.claude/usage-latest.json` ou
+équivalent). Pas implémentée. Si ça réapparaît, il y aurait un IPC à ajouter pour
+exposer la dernière session Claude vers un fichier que la statusline peut lire.
+
+### Performance / qualité de code
+
+Les reviewers de M5 ont laissé quelques notes mineures non bloquantes (cf. transcript
+M5). Les principales :
+
+- `electron/providers/index.js:18` : commentaire stale qui mentionne `scheduler.js` et
+  `notifier.js` (deletés en M5).
+- `_intervalMs` jamais lu dans `electron/poller.js` (champ mort).
+- Tests poller : style mixte `await Promise.resolve()` vs `vi.advanceTimersByTimeAsync` —
+  unifier sur le second.
+- Ajouter test pour `Poller.setInterval` quand stopped (branche non couverte).
+- Ajouter test pour `onResults` qui throw (branche non couverte).
+- `notify.js` : `silent: false` est hardcodé alors que c'est le défaut Electron. À retirer.
+- 3 patterns d'injection coexistent (deps object / named-args / constructor injection).
+  Acceptable mais documenté à formaliser si ça grandit.
+
+### Dette technique / refactor
+
+- **Memory persistante user** Claude Code : `memory/project_usage_app_pivot.md`,
+  `reference_data_sources.md`, `reference_widget_patterns.md`, `feedback_*.md` —
+  hébergée hors repo dans `~/.claude/projects/`. Si tu changes de machine, ces notes
+  ne suivent pas. Migrate-les vers `docs/notes/` si tu veux les rendre portables.
+- **Pas de E2E tests** Electron (Playwright). Tout est manuel pour les flows critiques
+  (auth providers, notifications). Si l'app grandit, à ajouter.
+- **Pas de CI/CD**. Pour l'instant `npm test` est local seulement. À setup avec GitHub
+  Actions Windows runner si souhaité.
+
+---
+
+## Memory persistante Claude (sur cette machine)
+
+Sur ta machine actuelle, Claude Code stocke ses notes dans
+`~/.claude/projects/C--Codex-UsageApp-Usage-App/memory/`. Contenu :
+
+- `project_usage_app_pivot.md` — pivot du projet
+- `reference_data_sources.md` — endpoints / auth des 4 providers
+- `reference_widget_patterns.md` — patterns Electron éprouvés
+- `feedback_data_freshness.md`, `feedback_widget_ux.md` — préférences UX
+
+Ces notes sont automatiquement chargées au boot de chaque session Claude sur cette
+machine. Inutile de les répéter dans les prompts — ils sont déjà dans le contexte.
+
+---
+
+## En cas de pépin
+
+- **Tests cassés sans modif** : la dance ABI better-sqlite3 — voir gotcha ci-dessus
+- **`npm run dev` plante** : idem, rebuild ABI Electron
+- **Build dist échoue avec icon < 256** : `package.json win.icon` doit pointer sur un
+  .ico avec une entrée ≥ 256, ou sur un .png ≥ 256 (electron-builder convertit)
+- **App packagée crash au boot avec « Cannot find module ... »** : un fichier requis n'est
+  pas dans `build.files`. Vérifier `npx asar list release/win-unpacked/resources/app.asar`
+- **App packagée ouvre une fenêtre vide** : Vite n'a pas build (`npm run build`) avant le
+  packaging. Utilise `npm run dist` pas `electron-builder` directement.
+- **Tray icon vide** : `build/tray-normal.png` n'est pas dans l'asar. Vérifier
+  `build.files`.
+
+---
+
+Bonne reprise 🚀
