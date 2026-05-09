@@ -16,3 +16,4 @@ build/icon.ico
 # Claude Code local config (per-user, not project)
 .claude/
 build/config.gypi
+coverage/

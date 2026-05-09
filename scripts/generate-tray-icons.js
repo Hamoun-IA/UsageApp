@@ -61,10 +61,13 @@ const buildDir = path.join(__dirname, '..', 'build');
 if (!fs.existsSync(buildDir)) fs.mkdirSync(buildDir, { recursive: true });
 
 const targets = [
-  { name: 'tray-normal.png',     size: 16, withDot: false },
-  { name: 'tray-normal@2x.png',  size: 32, withDot: false },
-  { name: 'tray-critical.png',   size: 16, withDot: true  },
-  { name: 'tray-critical@2x.png',size: 32, withDot: true  },
+  { name: 'tray-normal.png',     size: 16,  withDot: false },
+  { name: 'tray-normal@2x.png',  size: 32,  withDot: false },
+  { name: 'tray-critical.png',   size: 16,  withDot: true  },
+  { name: 'tray-critical@2x.png',size: 32,  withDot: true  },
+  // App icon used by electron-builder (Windows .exe / NSIS installer / portable).
+  // 256×256 is the size electron-builder expects when no .ico is provided.
+  { name: 'icon.png',            size: 256, withDot: false },
 ];
 
 for (const t of targets) {
