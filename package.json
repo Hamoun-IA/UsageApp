@@ -60,6 +60,7 @@
     "files": [
       "electron/**/*",
       "dist/**/*",
+      "src/shared/alert-defaults.json",
       "package.json"
     ],
     "win": {
