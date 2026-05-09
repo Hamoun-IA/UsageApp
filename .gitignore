@@ -16,4 +16,3 @@ Thumbs.db
 .claude/
 build/config.gypi
 coverage/
-build/icon.ico
