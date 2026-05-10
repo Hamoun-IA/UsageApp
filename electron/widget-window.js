@@ -57,6 +57,7 @@ function toggleWidget(tray) {
     positionNearTray(tray);
     w.show();
     w.focus();
+    w.webContents.send('widget:onShow');
   }
 }
 
