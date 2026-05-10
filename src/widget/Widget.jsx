@@ -3,12 +3,15 @@ import ProviderRow from './components/ProviderRow';
 import ProviderTabs from './components/ProviderTabs';
 import { formatRelativeTime } from '../shared/snapshot-utils';
 
+const REFRESH_THROTTLE_MS = 10_000;
+
 export default function Widget() {
   const [snaps, setSnaps] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
   const [lastFetch, setLastFetch] = useState(Date.now());
   const [activeTab, setActiveTab] = useState('all');
   const rootRef = useRef(null);
+  const lastFetchRef = useRef(0);
 
   useEffect(() => {
     if (!rootRef.current || !window.api?.widget?.setHeight) return;
@@ -20,6 +23,7 @@ export default function Widget() {
   }, []);
 
   const refresh = useCallback(async () => {
+    lastFetchRef.current = Date.now();
     setRefreshing(true);
     try {
       const result = await window.api.providers.refreshAll();
@@ -40,6 +44,14 @@ export default function Widget() {
   }, [refresh]);
 
   useEffect(() => { refresh(); }, [refresh]);
+
+  useEffect(() => {
+    if (!window.api?.widget?.onShow) return;
+    return window.api.widget.onShow(() => {
+      if (Date.now() - lastFetchRef.current < REFRESH_THROTTLE_MS) return;
+      refresh();
+    });
+  }, [refresh]);
 
   const visibleSnaps = activeTab === 'all'
     ? snaps
