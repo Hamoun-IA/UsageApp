@@ -56,9 +56,20 @@ function buildUsageExtraHeaders(token, cookieJar) {
 }
 
 function buildSessionExtraHeaders() {
+  // /api/auth/session returns {WARNING_BANNER: "..."} (anti-scraping decoy)
+  // unless the request is unambiguously identifiable as a same-origin JS fetch
+  // from a real browser tab. Send the full sec-fetch + sec-ch-ua + Accept set
+  // so OpenAI returns the real {user, expires, accessToken} payload.
   return browserHeaders('https://chatgpt.com/', {
     'User-Agent': MODERN_UA,
+    'Accept': 'application/json',
     'oai-language': 'en-US',
+    'sec-ch-ua': '"Chromium";v="148", "Google Chrome";v="148", "Not/A)Brand";v="99"',
+    'sec-ch-ua-mobile': '?0',
+    'sec-ch-ua-platform': '"Windows"',
+    'sec-fetch-dest': 'empty',
+    'sec-fetch-mode': 'cors',
+    'sec-fetch-site': 'same-origin',
   });
 }
 
