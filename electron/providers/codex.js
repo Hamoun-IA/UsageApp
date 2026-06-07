@@ -12,6 +12,11 @@ const SESSION_URL = 'https://chatgpt.com/api/auth/session';
 const USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
 const USAGE_PATH = '/backend-api/wham/usage';
 
+// Even though net.fetch routes through Chromium, the default UA tag includes
+// "Electron/X.Y.Z" which chatgpt.com detects and treats as logged-out. Force
+// a clean Chrome UA on every call to look like a normal browser tab.
+const MODERN_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36';
+
 // Hardcoded from a recent chatgpt.com deploy. These tag the request as
 // originating from a known web client; OpenAI uses them for anti-abuse
 // signals. They go stale on each chatgpt.com frontend deploy — accepted
@@ -33,6 +38,7 @@ const OAI_CLIENT_BUILD_NUMBER = '7215851';
  */
 function buildUsageExtraHeaders(token, cookieJar) {
   const extra = {
+    'User-Agent': MODERN_UA,
     Authorization: `Bearer ${token}`,
     'oai-client-version': OAI_CLIENT_VERSION,
     'oai-client-build-number': OAI_CLIENT_BUILD_NUMBER,
@@ -51,6 +57,7 @@ function buildUsageExtraHeaders(token, cookieJar) {
 
 function buildSessionExtraHeaders() {
   return browserHeaders('https://chatgpt.com/', {
+    'User-Agent': MODERN_UA,
     'oai-language': 'en-US',
   });
 }
@@ -117,7 +124,7 @@ function buildSnapshot(partial) {
   };
 }
 
-async function fetchAccessToken(netFetch) {
+async function fetchAccessToken(netFetch, cookieJar) {
   const r = await netFetch(SESSION_URL, {
     credentials: 'include',
     headers: buildSessionExtraHeaders(),
@@ -128,7 +135,18 @@ async function fetchAccessToken(netFetch) {
   if (!r.ok) return { error: { code: 'NETWORK', message: `HTTP ${r.status} on /api/auth/session`, retriable: true } };
   const j = await r.json();
   if (!j || typeof j.accessToken !== 'string') {
-    return { error: { code: 'AUTH_EXPIRED', message: 'No accessToken in /api/auth/session response', retriable: false } };
+    // Diagnostic: surface response keys, body snippet, and cookie-jar size so
+    // the next iteration knows whether the session is logged-out (empty body),
+    // shape-shifted (different field name), or cookies are missing entirely.
+    const keys = j && typeof j === 'object' ? Object.keys(j).join(',') : '<not-object>';
+    const snippet = JSON.stringify(j || null).slice(0, 200);
+    return {
+      error: {
+        code: 'AUTH_EXPIRED',
+        message: `No accessToken in /api/auth/session response — reconnect Codex (cookies in jar: ${cookieJar.size}, keys: [${keys}], body: ${snippet})`,
+        retriable: false,
+      },
+    };
   }
   return { token: j.accessToken };
 }
@@ -142,10 +160,12 @@ async function refresh() {
     const netFetch = resolveNetFetch();
     const cookieGetter = resolveSessionCookieGetter();
 
-    const tokenResp = await fetchAccessToken(netFetch);
-    if (tokenResp.error) return buildSnapshot({ error: tokenResp.error });
-
+    // Fetch the cookie jar BEFORE the session call so diagnostics on the
+    // "no accessToken" path can report whether cookies were actually present.
     const cookieJar = await getCookieJarFromSession(cookieGetter);
+
+    const tokenResp = await fetchAccessToken(netFetch, cookieJar);
+    if (tokenResp.error) return buildSnapshot({ error: tokenResp.error });
     const r = await netFetch(USAGE_URL, {
       credentials: 'include',
       headers: buildUsageExtraHeaders(tokenResp.token, cookieJar),
