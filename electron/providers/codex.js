@@ -28,18 +28,25 @@ function parseCookieJar(cookieStr) {
 }
 
 /**
- * Since late 2025, /backend-api/wham/usage rejects requests that don't carry
- * OpenAI's anti-abuse integrity header `x-oai-is` (sourced from the
- * `__Secure-oai-is` cookie) and the Cloudflare-edge routing headers
- * `x-openai-target-path` / `x-openai-target-route`. Token + auth cookie alone
- * are no longer sufficient.
+ * Since late 2025, /backend-api/wham/usage requires the full request shape of
+ * a real chatgpt.com tab:
+ *  - `Cookie` header (cf_clearance for Cloudflare, __Secure-oai-is + session
+ *    tokens for OpenAI's anti-abuse check). The Bearer token alone is not
+ *    accepted anymore.
+ *  - `x-oai-is` (sourced from the `__Secure-oai-is` cookie value).
+ *  - Cloudflare-edge routing headers `x-openai-target-path` /
+ *    `x-openai-target-route`.
  */
-function buildUsageHeaders(token, cookieJar) {
+function buildUsageHeaders(token, cookieStr, cookieJar) {
   const extra = {
     Authorization: `Bearer ${token}`,
+    Cookie: cookieStr,
     'x-openai-target-path': USAGE_PATH,
     'x-openai-target-route': USAGE_PATH,
     'oai-language': 'en-US',
+    'sec-fetch-dest': 'empty',
+    'sec-fetch-mode': 'cors',
+    'sec-fetch-site': 'same-origin',
   };
   const oaiIs = cookieJar.get('__Secure-oai-is');
   if (oaiIs) extra['x-oai-is'] = oaiIs;
@@ -103,10 +110,12 @@ async function refresh() {
     if (tokenResp.error) return buildSnapshot({ error: tokenResp.error });
     const cookieJar = parseCookieJar(cookie);
     const r = await fetch(USAGE_URL, {
-      headers: buildUsageHeaders(tokenResp.token, cookieJar),
+      headers: buildUsageHeaders(tokenResp.token, cookie, cookieJar),
     });
     if (r.status === 401 || r.status === 403) {
-      return buildSnapshot({ error: { code: 'AUTH_EXPIRED', message: 'Token rejected — reconnect Codex', retriable: false } });
+      let snippet = '';
+      try { snippet = (await r.text()).slice(0, 200); } catch {}
+      return buildSnapshot({ error: { code: 'AUTH_EXPIRED', message: `HTTP ${r.status} on /wham/usage — reconnect Codex (body: ${snippet || '<empty>'})`, retriable: false } });
     }
     if (!r.ok) return buildSnapshot({ error: { code: 'NETWORK', message: `HTTP ${r.status} on wham/usage`, retriable: true } });
     const json = await r.json();

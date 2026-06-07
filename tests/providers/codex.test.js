@@ -152,10 +152,9 @@ describe('codex.refresh()', () => {
     expect(snap.error.retriable).toBe(false);
   });
 
-  it('sends OpenAI integrity headers (x-oai-is, oai-device-id, x-openai-target-path/route) to /wham/usage', async () => {
-    mockSecrets.getProviderSecret.mockReturnValue(
-      '__Secure-oai-is=ois1.abc.def; oai-did=device-uuid-123; cf_clearance=foo'
-    );
+  it('sends OpenAI integrity headers (Cookie, x-oai-is, oai-device-id, x-openai-target-path/route) to /wham/usage', async () => {
+    const fullCookie = '__Secure-oai-is=ois1.abc.def; oai-did=device-uuid-123; cf_clearance=foo';
+    mockSecrets.getProviderSecret.mockReturnValue(fullCookie);
     global.fetch = makeFetch(
       { ok: true, status: 200, json: async () => ({ accessToken: 'fake-jwt-token' }) },
       { ok: true, status: 200, json: async () => sampleUsage }
@@ -164,15 +163,18 @@ describe('codex.refresh()', () => {
     const usageCall = global.fetch.mock.calls.find(([url]) => url === USAGE_URL);
     expect(usageCall).toBeDefined();
     const headers = usageCall[1].headers;
+    expect(headers['Cookie']).toBe(fullCookie);
     expect(headers['x-oai-is']).toBe('ois1.abc.def');
     expect(headers['oai-device-id']).toBe('device-uuid-123');
     expect(headers['x-openai-target-path']).toBe('/backend-api/wham/usage');
     expect(headers['x-openai-target-route']).toBe('/backend-api/wham/usage');
     expect(headers['Authorization']).toBe('Bearer fake-jwt-token');
+    expect(headers['sec-fetch-site']).toBe('same-origin');
   });
 
-  it('omits x-oai-is when cookie jar has no __Secure-oai-is (graceful fallback)', async () => {
-    mockSecrets.getProviderSecret.mockReturnValue('cf_clearance=foo; some-other=bar');
+  it('omits x-oai-is when cookie jar has no __Secure-oai-is (graceful fallback) but still sends Cookie', async () => {
+    const fullCookie = 'cf_clearance=foo; some-other=bar';
+    mockSecrets.getProviderSecret.mockReturnValue(fullCookie);
     global.fetch = makeFetch(
       { ok: true, status: 200, json: async () => ({ accessToken: 'fake-jwt-token' }) },
       { ok: true, status: 200, json: async () => sampleUsage }
@@ -180,10 +182,23 @@ describe('codex.refresh()', () => {
     await codex.refresh();
     const usageCall = global.fetch.mock.calls.find(([url]) => url === USAGE_URL);
     const headers = usageCall[1].headers;
+    expect(headers['Cookie']).toBe(fullCookie);
     expect(headers['x-oai-is']).toBeUndefined();
     expect(headers['oai-device-id']).toBeUndefined();
     // routing headers are constants so still sent
     expect(headers['x-openai-target-path']).toBe('/backend-api/wham/usage');
+  });
+
+  it('AUTH_EXPIRED message on /wham/usage 401 includes HTTP status and body snippet for diagnostics', async () => {
+    mockSecrets.getProviderSecret.mockReturnValue('cf_clearance=foo');
+    global.fetch = makeFetch(
+      { ok: true, status: 200, json: async () => ({ accessToken: 'fake-jwt-token' }) },
+      { ok: false, status: 403, text: async () => '{"detail":"forbidden by OAI"}', json: async () => ({}) }
+    );
+    const snap = await codex.refresh();
+    expect(snap.error.code).toBe('AUTH_EXPIRED');
+    expect(snap.error.message).toContain('HTTP 403');
+    expect(snap.error.message).toContain('forbidden by OAI');
   });
 });
 
