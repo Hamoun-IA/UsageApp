@@ -8,6 +8,45 @@ const label = 'Codex';
 const authMode = 'webview';
 const SESSION_URL = 'https://chatgpt.com/api/auth/session';
 const USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
+const USAGE_PATH = '/backend-api/wham/usage';
+
+/**
+ * Parse a Cookie header string ("a=b; c=d") into a Map of name → value.
+ * Splits each segment on the FIRST `=` to preserve `=` characters inside values.
+ */
+function parseCookieJar(cookieStr) {
+  const out = new Map();
+  if (!cookieStr || typeof cookieStr !== 'string') return out;
+  for (const segment of cookieStr.split(/;\s*/)) {
+    const eq = segment.indexOf('=');
+    if (eq <= 0) continue;
+    const name = segment.slice(0, eq).trim();
+    const value = segment.slice(eq + 1).trim();
+    if (name) out.set(name, value);
+  }
+  return out;
+}
+
+/**
+ * Since late 2025, /backend-api/wham/usage rejects requests that don't carry
+ * OpenAI's anti-abuse integrity header `x-oai-is` (sourced from the
+ * `__Secure-oai-is` cookie) and the Cloudflare-edge routing headers
+ * `x-openai-target-path` / `x-openai-target-route`. Token + auth cookie alone
+ * are no longer sufficient.
+ */
+function buildUsageHeaders(token, cookieJar) {
+  const extra = {
+    Authorization: `Bearer ${token}`,
+    'x-openai-target-path': USAGE_PATH,
+    'x-openai-target-route': USAGE_PATH,
+    'oai-language': 'en-US',
+  };
+  const oaiIs = cookieJar.get('__Secure-oai-is');
+  if (oaiIs) extra['x-oai-is'] = oaiIs;
+  const oaiDid = cookieJar.get('oai-did');
+  if (oaiDid) extra['oai-device-id'] = oaiDid;
+  return browserHeaders('https://chatgpt.com/codex/cloud/settings/analytics', extra);
+}
 
 const emitter = new EventEmitter();
 
@@ -62,10 +101,9 @@ async function refresh() {
   try {
     const tokenResp = await fetchAccessToken(cookie);
     if (tokenResp.error) return buildSnapshot({ error: tokenResp.error });
+    const cookieJar = parseCookieJar(cookie);
     const r = await fetch(USAGE_URL, {
-      headers: browserHeaders('https://chatgpt.com/codex/cloud/settings/analytics', {
-        Authorization: `Bearer ${tokenResp.token}`,
-      }),
+      headers: buildUsageHeaders(tokenResp.token, cookieJar),
     });
     if (r.status === 401 || r.status === 403) {
       return buildSnapshot({ error: { code: 'AUTH_EXPIRED', message: 'Token rejected — reconnect Codex', retriable: false } });
