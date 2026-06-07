@@ -7,13 +7,10 @@ const { browserHeaders } = require('./_browser-headers');
 const id = 'codex';
 const label = 'Codex';
 const authMode = 'webview';
+const CODEX_PARTITION = 'persist:codex-connect';
 const SESSION_URL = 'https://chatgpt.com/api/auth/session';
 const USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
 const USAGE_PATH = '/backend-api/wham/usage';
-
-// Modern Chrome UA — OpenAI's anti-abuse rejects requests whose UA doesn't
-// match the cf_clearance cookie's fingerprint (cookie issued for Chrome 148).
-const MODERN_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36';
 
 // Hardcoded from a recent chatgpt.com deploy. These tag the request as
 // originating from a known web client; OpenAI uses them for anti-abuse
@@ -23,54 +20,26 @@ const OAI_CLIENT_VERSION = 'prod-a9e268687461965b9507d0c5eeb8d58ad00b12dd';
 const OAI_CLIENT_BUILD_NUMBER = '7215851';
 
 /**
- * Parse a Cookie header string ("a=b; c=d") into a Map of name → value.
- * Splits each segment on the FIRST `=` to preserve `=` characters inside values.
+ * Build the app-level headers added on top of what Chromium's net.fetch
+ * already sends (User-Agent, sec-ch-ua*, Cookie via credentials: 'include').
+ *
+ * Why net.fetch instead of Node's global fetch: as of late 2025, OpenAI's
+ * anti-abuse path returns `code: "token_invalidated"` for requests whose
+ * TLS fingerprint (JA3) and cookie jar context don't match the browser
+ * tab that obtained `cf_clearance`. Even with perfectly-mimicked headers,
+ * a Node-fetch request gets the user's session marked invalid. Calling
+ * through Electron's net module routes through Chromium's network stack
+ * — same JA3, same cookie store as the BrowserWindow used at connect.
  */
-function parseCookieJar(cookieStr) {
-  const out = new Map();
-  if (!cookieStr || typeof cookieStr !== 'string') return out;
-  for (const segment of cookieStr.split(/;\s*/)) {
-    const eq = segment.indexOf('=');
-    if (eq <= 0) continue;
-    const name = segment.slice(0, eq).trim();
-    const value = segment.slice(eq + 1).trim();
-    if (name) out.set(name, value);
-  }
-  return out;
-}
-
-/**
- * Since late 2025, /backend-api/wham/usage requires the full request shape of
- * a real chatgpt.com tab. If anti-abuse decides the request looks bot-like
- * (old UA, missing client-version, missing sec-ch-ua signals) it doesn't
- * return 401 directly — it INVALIDATES the user's session-bound JWT and
- * subsequent requests return `code: "token_invalidated"`. So we must mirror
- * the browser request as faithfully as possible:
- *  - Modern Chrome User-Agent (matched to cf_clearance fingerprint).
- *  - `Cookie` (full jar — cf_clearance + __Secure-oai-is + session tokens).
- *  - `x-oai-is` (from `__Secure-oai-is` cookie value).
- *  - `oai-client-version` / `oai-client-build-number` (client fingerprint).
- *  - `oai-session-id` (per-tab UUID).
- *  - `sec-ch-ua*` / `sec-fetch-*` (browser fingerprint).
- *  - Cloudflare-edge routing `x-openai-target-path` / `x-openai-target-route`.
- */
-function buildUsageHeaders(token, cookieStr, cookieJar) {
+function buildUsageExtraHeaders(token, cookieJar) {
   const extra = {
-    'User-Agent': MODERN_UA,
     Authorization: `Bearer ${token}`,
-    Cookie: cookieStr,
     'oai-client-version': OAI_CLIENT_VERSION,
     'oai-client-build-number': OAI_CLIENT_BUILD_NUMBER,
     'oai-session-id': randomUUID(),
+    'oai-language': 'en-US',
     'x-openai-target-path': USAGE_PATH,
     'x-openai-target-route': USAGE_PATH,
-    'oai-language': 'en-US',
-    'sec-ch-ua': '"Chromium";v="148", "Google Chrome";v="148", "Not/A)Brand";v="99"',
-    'sec-ch-ua-mobile': '?0',
-    'sec-ch-ua-platform': '"Windows"',
-    'sec-fetch-dest': 'empty',
-    'sec-fetch-mode': 'cors',
-    'sec-fetch-site': 'same-origin',
     'priority': 'u=1, i',
   };
   const oaiIs = cookieJar.get('__Secure-oai-is');
@@ -80,15 +49,51 @@ function buildUsageHeaders(token, cookieStr, cookieJar) {
   return browserHeaders('https://chatgpt.com/codex/cloud/settings/analytics', extra);
 }
 
+function buildSessionExtraHeaders() {
+  return browserHeaders('https://chatgpt.com/', {
+    'oai-language': 'en-US',
+  });
+}
+
 const emitter = new EventEmitter();
 
 const deps = {
   secrets: require('../secrets'),
   captureCodexCookie,
+  // Lazily resolved at first use — tests inject mocks via `codex.deps.netFetch`
+  // and `codex.deps.getSessionCookies` to avoid loading the `electron` module.
+  netFetch: null,
+  getSessionCookies: null,
 };
+
+function resolveNetFetch() {
+  if (deps.netFetch) return deps.netFetch;
+  const { net, session } = require('electron');
+  const codexSession = session.fromPartition(CODEX_PARTITION);
+  // Pin the session so cookies from the persistent partition are sent
+  // automatically (credentials: 'include' is the default for net.fetch).
+  return (url, init = {}) => net.fetch(url, { ...init, session: codexSession });
+}
+
+function resolveSessionCookieGetter() {
+  if (deps.getSessionCookies) return deps.getSessionCookies;
+  const { session } = require('electron');
+  const codexSession = session.fromPartition(CODEX_PARTITION);
+  return () => codexSession.cookies.get({ url: 'https://chatgpt.com' });
+}
+
+async function getCookieJarFromSession(cookieGetter) {
+  const cookies = await cookieGetter();
+  const jar = new Map();
+  for (const c of cookies || []) jar.set(c.name, c.value);
+  return jar;
+}
 
 async function connect() {
   const cookie = await deps.captureCodexCookie();
+  // Stored cookie string is kept for backward compat — refresh() only uses it
+  // as a "connected" marker. Actual cookies for the network calls come from
+  // the persistent session partition that the connect BrowserWindow populated.
   deps.secrets.setProviderSecret(id, cookie);
 }
 
@@ -112,18 +117,10 @@ function buildSnapshot(partial) {
   };
 }
 
-async function fetchAccessToken(cookie) {
-  const r = await fetch(SESSION_URL, {
-    headers: browserHeaders('https://chatgpt.com/', {
-      'User-Agent': MODERN_UA,
-      Cookie: cookie,
-      'sec-ch-ua': '"Chromium";v="148", "Google Chrome";v="148", "Not/A)Brand";v="99"',
-      'sec-ch-ua-mobile': '?0',
-      'sec-ch-ua-platform': '"Windows"',
-      'sec-fetch-dest': 'empty',
-      'sec-fetch-mode': 'cors',
-      'sec-fetch-site': 'same-origin',
-    }),
+async function fetchAccessToken(netFetch) {
+  const r = await netFetch(SESSION_URL, {
+    credentials: 'include',
+    headers: buildSessionExtraHeaders(),
   });
   if (r.status === 401 || r.status === 403) {
     return { error: { code: 'AUTH_EXPIRED', message: 'ChatGPT session expired — reconnect Codex', retriable: false } };
@@ -137,16 +134,21 @@ async function fetchAccessToken(cookie) {
 }
 
 async function refresh() {
-  const cookie = deps.secrets.getProviderSecret(id);
-  if (!cookie) {
+  const stored = deps.secrets.getProviderSecret(id);
+  if (!stored) {
     return buildSnapshot({ error: { code: 'NOT_CONFIGURED', message: 'Connect Codex first', retriable: false } });
   }
   try {
-    const tokenResp = await fetchAccessToken(cookie);
+    const netFetch = resolveNetFetch();
+    const cookieGetter = resolveSessionCookieGetter();
+
+    const tokenResp = await fetchAccessToken(netFetch);
     if (tokenResp.error) return buildSnapshot({ error: tokenResp.error });
-    const cookieJar = parseCookieJar(cookie);
-    const r = await fetch(USAGE_URL, {
-      headers: buildUsageHeaders(tokenResp.token, cookie, cookieJar),
+
+    const cookieJar = await getCookieJarFromSession(cookieGetter);
+    const r = await netFetch(USAGE_URL, {
+      credentials: 'include',
+      headers: buildUsageExtraHeaders(tokenResp.token, cookieJar),
     });
     if (r.status === 401 || r.status === 403) {
       let snippet = '';

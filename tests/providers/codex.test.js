@@ -7,6 +7,10 @@ vi.mock('electron', () => ({
     encryptString: (s) => Buffer.from(s),
     decryptString: (b) => b.toString(),
   },
+  // Stubbed — real net/session is never reached because tests inject
+  // codex.deps.netFetch and codex.deps.getSessionCookies before refresh().
+  net: { fetch: () => { throw new Error('electron.net.fetch should be mocked via deps.netFetch'); } },
+  session: { fromPartition: () => ({ cookies: { get: async () => [] } }) },
 }));
 
 const sampleUsage = {
@@ -23,12 +27,16 @@ const sampleUsage = {
 const SESSION_URL = 'https://chatgpt.com/api/auth/session';
 const USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
 
-function makeFetch(sessionResp, usageResp) {
+function makeNetFetch(sessionResp, usageResp) {
   return vi.fn().mockImplementation((url) => {
     if (url === SESSION_URL) return Promise.resolve(sessionResp);
     if (url === USAGE_URL) return Promise.resolve(usageResp);
     return Promise.reject(new Error(`Unexpected fetch URL: ${url}`));
   });
+}
+
+function makeCookieGetter(cookies = []) {
+  return vi.fn().mockResolvedValue(cookies);
 }
 
 describe('codex.refresh()', () => {
@@ -37,7 +45,6 @@ describe('codex.refresh()', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    global.fetch = vi.fn();
     vi.resetModules();
     codex = await import('../../electron/providers/codex.js');
     mockSecrets = {
@@ -46,6 +53,9 @@ describe('codex.refresh()', () => {
       clearProviderSecret: vi.fn(),
     };
     codex.deps.secrets = mockSecrets;
+    // Sensible defaults — overridden per-test as needed.
+    codex.deps.netFetch = vi.fn();
+    codex.deps.getSessionCookies = makeCookieGetter([]);
   });
 
   it('returns NOT_CONFIGURED when no cookie stored', async () => {
@@ -56,8 +66,8 @@ describe('codex.refresh()', () => {
   });
 
   it('returns parsed snapshot on success', async () => {
-    mockSecrets.getProviderSecret.mockReturnValue('cookie=abc');
-    global.fetch = makeFetch(
+    mockSecrets.getProviderSecret.mockReturnValue('connected');
+    codex.deps.netFetch = makeNetFetch(
       { ok: true, status: 200, json: async () => ({ accessToken: 'fake-jwt-token' }) },
       { ok: true, status: 200, json: async () => sampleUsage }
     );
@@ -73,8 +83,8 @@ describe('codex.refresh()', () => {
   });
 
   it('returns AUTH_EXPIRED on 401 from /api/auth/session', async () => {
-    mockSecrets.getProviderSecret.mockReturnValue('cookie=abc');
-    global.fetch = makeFetch(
+    mockSecrets.getProviderSecret.mockReturnValue('connected');
+    codex.deps.netFetch = makeNetFetch(
       { ok: false, status: 401, json: async () => ({}) },
       null
     );
@@ -84,8 +94,8 @@ describe('codex.refresh()', () => {
   });
 
   it('returns AUTH_EXPIRED on 401 from /backend-api/wham/usage', async () => {
-    mockSecrets.getProviderSecret.mockReturnValue('cookie=abc');
-    global.fetch = makeFetch(
+    mockSecrets.getProviderSecret.mockReturnValue('connected');
+    codex.deps.netFetch = makeNetFetch(
       { ok: true, status: 200, json: async () => ({ accessToken: 'fake-jwt-token' }) },
       { ok: false, status: 401, json: async () => ({}) }
     );
@@ -95,8 +105,8 @@ describe('codex.refresh()', () => {
   });
 
   it('returns AUTH_EXPIRED when /api/auth/session returns 200 but no accessToken', async () => {
-    mockSecrets.getProviderSecret.mockReturnValue('cookie=abc');
-    global.fetch = makeFetch(
+    mockSecrets.getProviderSecret.mockReturnValue('connected');
+    codex.deps.netFetch = makeNetFetch(
       { ok: true, status: 200, json: async () => ({ user: 'someone' }) },
       null
     );
@@ -106,8 +116,8 @@ describe('codex.refresh()', () => {
   });
 
   it('returns NETWORK on 503 from session endpoint', async () => {
-    mockSecrets.getProviderSecret.mockReturnValue('cookie=abc');
-    global.fetch = makeFetch(
+    mockSecrets.getProviderSecret.mockReturnValue('connected');
+    codex.deps.netFetch = makeNetFetch(
       { ok: false, status: 503, json: async () => ({}) },
       null
     );
@@ -117,20 +127,20 @@ describe('codex.refresh()', () => {
   });
 
   it('returns NETWORK on fetch throw', async () => {
-    mockSecrets.getProviderSecret.mockReturnValue('cookie=abc');
-    global.fetch = vi.fn().mockRejectedValue(new Error('ECONNRESET'));
+    mockSecrets.getProviderSecret.mockReturnValue('connected');
+    codex.deps.netFetch = vi.fn().mockRejectedValue(new Error('ECONNRESET'));
     const snap = await codex.refresh();
     expect(snap.error.code).toBe('NETWORK');
     expect(snap.error.retriable).toBe(true);
   });
 
   it('returns QUOTA_EXCEEDED with parsed values when limit_reached is true', async () => {
-    mockSecrets.getProviderSecret.mockReturnValue('cookie=abc');
+    mockSecrets.getProviderSecret.mockReturnValue('connected');
     const limitedUsage = {
       ...sampleUsage,
       rate_limit: { ...sampleUsage.rate_limit, limit_reached: true },
     };
-    global.fetch = makeFetch(
+    codex.deps.netFetch = makeNetFetch(
       { ok: true, status: 200, json: async () => ({ accessToken: 'fake-jwt-token' }) },
       { ok: true, status: 200, json: async () => limitedUsage }
     );
@@ -142,8 +152,8 @@ describe('codex.refresh()', () => {
   });
 
   it('returns PARSE when usage response has unexpected shape', async () => {
-    mockSecrets.getProviderSecret.mockReturnValue('cookie=abc');
-    global.fetch = makeFetch(
+    mockSecrets.getProviderSecret.mockReturnValue('connected');
+    codex.deps.netFetch = makeNetFetch(
       { ok: true, status: 200, json: async () => ({ accessToken: 'fake-jwt-token' }) },
       { ok: true, status: 200, json: async () => ({ rate_limit: null }) }
     );
@@ -152,52 +162,57 @@ describe('codex.refresh()', () => {
     expect(snap.error.retriable).toBe(false);
   });
 
-  it('sends OpenAI integrity headers (Cookie, x-oai-is, oai-device-id, x-openai-target-path/route, client fingerprint) to /wham/usage', async () => {
-    const fullCookie = '__Secure-oai-is=ois1.abc.def; oai-did=device-uuid-123; cf_clearance=foo';
-    mockSecrets.getProviderSecret.mockReturnValue(fullCookie);
-    global.fetch = makeFetch(
+  it('sends Bearer + integrity headers to /wham/usage; credentials:include sends cookies via session', async () => {
+    mockSecrets.getProviderSecret.mockReturnValue('connected');
+    codex.deps.getSessionCookies = makeCookieGetter([
+      { name: '__Secure-oai-is', value: 'ois1.abc.def' },
+      { name: 'oai-did', value: 'device-uuid-123' },
+      { name: 'cf_clearance', value: 'foo' },
+    ]);
+    codex.deps.netFetch = makeNetFetch(
       { ok: true, status: 200, json: async () => ({ accessToken: 'fake-jwt-token' }) },
       { ok: true, status: 200, json: async () => sampleUsage }
     );
     await codex.refresh();
-    const usageCall = global.fetch.mock.calls.find(([url]) => url === USAGE_URL);
+    const usageCall = codex.deps.netFetch.mock.calls.find(([url]) => url === USAGE_URL);
     expect(usageCall).toBeDefined();
-    const headers = usageCall[1].headers;
-    expect(headers['Cookie']).toBe(fullCookie);
+    const init = usageCall[1];
+    expect(init.credentials).toBe('include');
+    const headers = init.headers;
+    expect(headers['Authorization']).toBe('Bearer fake-jwt-token');
     expect(headers['x-oai-is']).toBe('ois1.abc.def');
     expect(headers['oai-device-id']).toBe('device-uuid-123');
     expect(headers['x-openai-target-path']).toBe('/backend-api/wham/usage');
     expect(headers['x-openai-target-route']).toBe('/backend-api/wham/usage');
-    expect(headers['Authorization']).toBe('Bearer fake-jwt-token');
-    expect(headers['sec-fetch-site']).toBe('same-origin');
-    expect(headers['User-Agent']).toContain('Chrome/148');
     expect(headers['oai-client-version']).toMatch(/^prod-/);
     expect(headers['oai-client-build-number']).toBeTruthy();
     expect(headers['oai-session-id']).toMatch(/^[0-9a-f-]{36}$/);
-    expect(headers['sec-ch-ua']).toContain('Chromium');
-    expect(headers['sec-ch-ua-platform']).toBe('"Windows"');
+    // No manual Cookie header — net.fetch with credentials:'include' attaches
+    // the persistent session's cookies automatically.
+    expect(headers['Cookie']).toBeUndefined();
   });
 
-  it('omits x-oai-is when cookie jar has no __Secure-oai-is (graceful fallback) but still sends Cookie', async () => {
-    const fullCookie = 'cf_clearance=foo; some-other=bar';
-    mockSecrets.getProviderSecret.mockReturnValue(fullCookie);
-    global.fetch = makeFetch(
+  it('omits x-oai-is when session cookies lack __Secure-oai-is (graceful fallback)', async () => {
+    mockSecrets.getProviderSecret.mockReturnValue('connected');
+    codex.deps.getSessionCookies = makeCookieGetter([
+      { name: 'cf_clearance', value: 'foo' },
+      { name: 'some-other', value: 'bar' },
+    ]);
+    codex.deps.netFetch = makeNetFetch(
       { ok: true, status: 200, json: async () => ({ accessToken: 'fake-jwt-token' }) },
       { ok: true, status: 200, json: async () => sampleUsage }
     );
     await codex.refresh();
-    const usageCall = global.fetch.mock.calls.find(([url]) => url === USAGE_URL);
+    const usageCall = codex.deps.netFetch.mock.calls.find(([url]) => url === USAGE_URL);
     const headers = usageCall[1].headers;
-    expect(headers['Cookie']).toBe(fullCookie);
     expect(headers['x-oai-is']).toBeUndefined();
     expect(headers['oai-device-id']).toBeUndefined();
-    // routing headers are constants so still sent
     expect(headers['x-openai-target-path']).toBe('/backend-api/wham/usage');
   });
 
   it('AUTH_EXPIRED message on /wham/usage 401 includes HTTP status and body snippet for diagnostics', async () => {
-    mockSecrets.getProviderSecret.mockReturnValue('cf_clearance=foo');
-    global.fetch = makeFetch(
+    mockSecrets.getProviderSecret.mockReturnValue('connected');
+    codex.deps.netFetch = makeNetFetch(
       { ok: true, status: 200, json: async () => ({ accessToken: 'fake-jwt-token' }) },
       { ok: false, status: 403, text: async () => '{"detail":"forbidden by OAI"}', json: async () => ({}) }
     );
@@ -205,6 +220,18 @@ describe('codex.refresh()', () => {
     expect(snap.error.code).toBe('AUTH_EXPIRED');
     expect(snap.error.message).toContain('HTTP 403');
     expect(snap.error.message).toContain('forbidden by OAI');
+  });
+
+  it('calls /api/auth/session with credentials:include so session cookies are sent by Chromium', async () => {
+    mockSecrets.getProviderSecret.mockReturnValue('connected');
+    codex.deps.netFetch = makeNetFetch(
+      { ok: true, status: 200, json: async () => ({ accessToken: 'fake-jwt-token' }) },
+      { ok: true, status: 200, json: async () => sampleUsage }
+    );
+    await codex.refresh();
+    const sessionCall = codex.deps.netFetch.mock.calls.find(([url]) => url === SESSION_URL);
+    expect(sessionCall).toBeDefined();
+    expect(sessionCall[1].credentials).toBe('include');
   });
 });
 
