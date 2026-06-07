@@ -2,7 +2,6 @@ const { EventEmitter } = require('events');
 const { randomUUID } = require('crypto');
 const { parseCodexUsage } = require('./codex-parser');
 const { captureCodexCookie } = require('./codex-connect');
-const { browserHeaders } = require('./_browser-headers');
 
 const id = 'codex';
 const label = 'Codex';
@@ -36,41 +35,34 @@ const OAI_CLIENT_BUILD_NUMBER = '7215851';
  * through Electron's net module routes through Chromium's network stack
  * — same JA3, same cookie store as the BrowserWindow used at connect.
  */
+// Chromium's net.fetch forbids the "Sec-" family, User-Agent, Cookie, Referer,
+// Accept-Encoding etc. — they are CORS-protected/Chromium-controlled and
+// setting them throws net::ERR_INVALID_ARGUMENT. The UA is pinned on the
+// session via session.setUserAgent(MODERN_UA); sec-fetch + cookie attachment
+// happen automatically through credentials:'include'.
 function buildUsageExtraHeaders(token, cookieJar) {
   const extra = {
-    'User-Agent': MODERN_UA,
     Authorization: `Bearer ${token}`,
+    Accept: 'application/json',
     'oai-client-version': OAI_CLIENT_VERSION,
     'oai-client-build-number': OAI_CLIENT_BUILD_NUMBER,
     'oai-session-id': randomUUID(),
     'oai-language': 'en-US',
     'x-openai-target-path': USAGE_PATH,
     'x-openai-target-route': USAGE_PATH,
-    'priority': 'u=1, i',
   };
   const oaiIs = cookieJar.get('__Secure-oai-is');
   if (oaiIs) extra['x-oai-is'] = oaiIs;
   const oaiDid = cookieJar.get('oai-did');
   if (oaiDid) extra['oai-device-id'] = oaiDid;
-  return browserHeaders('https://chatgpt.com/codex/cloud/settings/analytics', extra);
+  return extra;
 }
 
 function buildSessionExtraHeaders() {
-  // /api/auth/session returns {WARNING_BANNER: "..."} (anti-scraping decoy)
-  // unless the request is unambiguously identifiable as a same-origin JS fetch
-  // from a real browser tab. Send the full sec-fetch + sec-ch-ua + Accept set
-  // so OpenAI returns the real {user, expires, accessToken} payload.
-  return browserHeaders('https://chatgpt.com/', {
-    'User-Agent': MODERN_UA,
-    'Accept': 'application/json',
+  return {
+    Accept: 'application/json',
     'oai-language': 'en-US',
-    'sec-ch-ua': '"Chromium";v="148", "Google Chrome";v="148", "Not/A)Brand";v="99"',
-    'sec-ch-ua-mobile': '?0',
-    'sec-ch-ua-platform': '"Windows"',
-    'sec-fetch-dest': 'empty',
-    'sec-fetch-mode': 'cors',
-    'sec-fetch-site': 'same-origin',
-  });
+  };
 }
 
 const emitter = new EventEmitter();
@@ -84,12 +76,20 @@ const deps = {
   getSessionCookies: null,
 };
 
+let sessionUserAgentSet = false;
+
 function resolveNetFetch() {
   if (deps.netFetch) return deps.netFetch;
   const { net, session } = require('electron');
   const codexSession = session.fromPartition(CODEX_PARTITION);
-  // Pin the session so cookies from the persistent partition are sent
-  // automatically (credentials: 'include' is the default for net.fetch).
+  if (!sessionUserAgentSet) {
+    // Pin a clean Chrome 148 UA on the session itself. Default Electron UA
+    // includes 'Electron/X.Y.Z' which chatgpt.com treats as suspicious.
+    // Doing it on the session (not as a per-call header) is the only way —
+    // User-Agent is a forbidden header for net.fetch.
+    codexSession.setUserAgent(MODERN_UA);
+    sessionUserAgentSet = true;
+  }
   return (url, init = {}) => net.fetch(url, { ...init, session: codexSession });
 }
 
