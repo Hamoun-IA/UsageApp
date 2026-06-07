@@ -1,4 +1,5 @@
 const { EventEmitter } = require('events');
+const { randomUUID } = require('crypto');
 const { parseCodexUsage } = require('./codex-parser');
 const { captureCodexCookie } = require('./codex-connect');
 const { browserHeaders } = require('./_browser-headers');
@@ -9,6 +10,17 @@ const authMode = 'webview';
 const SESSION_URL = 'https://chatgpt.com/api/auth/session';
 const USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
 const USAGE_PATH = '/backend-api/wham/usage';
+
+// Modern Chrome UA — OpenAI's anti-abuse rejects requests whose UA doesn't
+// match the cf_clearance cookie's fingerprint (cookie issued for Chrome 148).
+const MODERN_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36';
+
+// Hardcoded from a recent chatgpt.com deploy. These tag the request as
+// originating from a known web client; OpenAI uses them for anti-abuse
+// signals. They go stale on each chatgpt.com frontend deploy — accepted
+// trade-off until we scrape them dynamically from chatgpt.com HTML.
+const OAI_CLIENT_VERSION = 'prod-a9e268687461965b9507d0c5eeb8d58ad00b12dd';
+const OAI_CLIENT_BUILD_NUMBER = '7215851';
 
 /**
  * Parse a Cookie header string ("a=b; c=d") into a Map of name → value.
@@ -29,24 +41,37 @@ function parseCookieJar(cookieStr) {
 
 /**
  * Since late 2025, /backend-api/wham/usage requires the full request shape of
- * a real chatgpt.com tab:
- *  - `Cookie` header (cf_clearance for Cloudflare, __Secure-oai-is + session
- *    tokens for OpenAI's anti-abuse check). The Bearer token alone is not
- *    accepted anymore.
- *  - `x-oai-is` (sourced from the `__Secure-oai-is` cookie value).
- *  - Cloudflare-edge routing headers `x-openai-target-path` /
- *    `x-openai-target-route`.
+ * a real chatgpt.com tab. If anti-abuse decides the request looks bot-like
+ * (old UA, missing client-version, missing sec-ch-ua signals) it doesn't
+ * return 401 directly — it INVALIDATES the user's session-bound JWT and
+ * subsequent requests return `code: "token_invalidated"`. So we must mirror
+ * the browser request as faithfully as possible:
+ *  - Modern Chrome User-Agent (matched to cf_clearance fingerprint).
+ *  - `Cookie` (full jar — cf_clearance + __Secure-oai-is + session tokens).
+ *  - `x-oai-is` (from `__Secure-oai-is` cookie value).
+ *  - `oai-client-version` / `oai-client-build-number` (client fingerprint).
+ *  - `oai-session-id` (per-tab UUID).
+ *  - `sec-ch-ua*` / `sec-fetch-*` (browser fingerprint).
+ *  - Cloudflare-edge routing `x-openai-target-path` / `x-openai-target-route`.
  */
 function buildUsageHeaders(token, cookieStr, cookieJar) {
   const extra = {
+    'User-Agent': MODERN_UA,
     Authorization: `Bearer ${token}`,
     Cookie: cookieStr,
+    'oai-client-version': OAI_CLIENT_VERSION,
+    'oai-client-build-number': OAI_CLIENT_BUILD_NUMBER,
+    'oai-session-id': randomUUID(),
     'x-openai-target-path': USAGE_PATH,
     'x-openai-target-route': USAGE_PATH,
     'oai-language': 'en-US',
+    'sec-ch-ua': '"Chromium";v="148", "Google Chrome";v="148", "Not/A)Brand";v="99"',
+    'sec-ch-ua-mobile': '?0',
+    'sec-ch-ua-platform': '"Windows"',
     'sec-fetch-dest': 'empty',
     'sec-fetch-mode': 'cors',
     'sec-fetch-site': 'same-origin',
+    'priority': 'u=1, i',
   };
   const oaiIs = cookieJar.get('__Secure-oai-is');
   if (oaiIs) extra['x-oai-is'] = oaiIs;
@@ -88,7 +113,18 @@ function buildSnapshot(partial) {
 }
 
 async function fetchAccessToken(cookie) {
-  const r = await fetch(SESSION_URL, { headers: browserHeaders('https://chatgpt.com/', { Cookie: cookie }) });
+  const r = await fetch(SESSION_URL, {
+    headers: browserHeaders('https://chatgpt.com/', {
+      'User-Agent': MODERN_UA,
+      Cookie: cookie,
+      'sec-ch-ua': '"Chromium";v="148", "Google Chrome";v="148", "Not/A)Brand";v="99"',
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': '"Windows"',
+      'sec-fetch-dest': 'empty',
+      'sec-fetch-mode': 'cors',
+      'sec-fetch-site': 'same-origin',
+    }),
+  });
   if (r.status === 401 || r.status === 403) {
     return { error: { code: 'AUTH_EXPIRED', message: 'ChatGPT session expired — reconnect Codex', retriable: false } };
   }

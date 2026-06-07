@@ -152,7 +152,7 @@ describe('codex.refresh()', () => {
     expect(snap.error.retriable).toBe(false);
   });
 
-  it('sends OpenAI integrity headers (Cookie, x-oai-is, oai-device-id, x-openai-target-path/route) to /wham/usage', async () => {
+  it('sends OpenAI integrity headers (Cookie, x-oai-is, oai-device-id, x-openai-target-path/route, client fingerprint) to /wham/usage', async () => {
     const fullCookie = '__Secure-oai-is=ois1.abc.def; oai-did=device-uuid-123; cf_clearance=foo';
     mockSecrets.getProviderSecret.mockReturnValue(fullCookie);
     global.fetch = makeFetch(
@@ -170,6 +170,12 @@ describe('codex.refresh()', () => {
     expect(headers['x-openai-target-route']).toBe('/backend-api/wham/usage');
     expect(headers['Authorization']).toBe('Bearer fake-jwt-token');
     expect(headers['sec-fetch-site']).toBe('same-origin');
+    expect(headers['User-Agent']).toContain('Chrome/148');
+    expect(headers['oai-client-version']).toMatch(/^prod-/);
+    expect(headers['oai-client-build-number']).toBeTruthy();
+    expect(headers['oai-session-id']).toMatch(/^[0-9a-f-]{36}$/);
+    expect(headers['sec-ch-ua']).toContain('Chromium');
+    expect(headers['sec-ch-ua-platform']).toBe('"Windows"');
   });
 
   it('omits x-oai-is when cookie jar has no __Secure-oai-is (graceful fallback) but still sends Cookie', async () => {
